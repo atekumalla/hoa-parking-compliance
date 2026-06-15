@@ -128,6 +128,11 @@ env/
 venv/
 ENV/
 env.bak/
+
+# Service account credentials
+svc_account_api_key
+service-account-key.json
+*service-account*.json
 venv.bak/
 
 # Spyder project settings
