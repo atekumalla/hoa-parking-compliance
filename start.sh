@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 # Write the service account JSON from the environment variable to a file
-echo "$GOOGLE_CREDENTIALS_JSON" > /tmp/service-account-key.json
+# Using printf to preserve special characters (like \n in private keys)
+printenv GOOGLE_CREDENTIALS_JSON > /tmp/service-account-key.json
 
 # Export the path so the app can find it
 export GOOGLE_APPLICATION_CREDENTIALS=/tmp/service-account-key.json
