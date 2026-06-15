@@ -90,9 +90,79 @@ def load_data():
             st.session_state.data_loaded = False
 
 
+def get_known_vehicles():
+    """Get a list of known vehicles from historical data for quick-add dropdowns."""
+    if not st.session_state.get('data_loaded', False):
+        return []
+    
+    historical = st.session_state.get('historical_data', pd.DataFrame())
+    if historical.empty:
+        return []
+    
+    # Get unique vehicles with their most recent info
+    vehicles = historical.sort_values('Timestamp', ascending=False).drop_duplicates(
+        subset=['License Plate'], keep='first'
+    )
+    
+    vehicle_list = []
+    for _, row in vehicles.iterrows():
+        plate = row.get('License Plate', '')
+        tag = row.get('Tag Number', '')
+        make = row.get('Make', '')
+        model = row.get('Model', '')
+        label = f"{plate}"
+        if tag:
+            label += f" | Tag: {tag}"
+        if make or model:
+            label += f" | {make} {model}".strip()
+        vehicle_list.append({
+            'label': label,
+            'license_plate': plate,
+            'tag_number': tag,
+            'make': make,
+            'model': model
+        })
+    
+    return sorted(vehicle_list, key=lambda x: x['license_plate'])
+
+
 def add_vehicle_entry_form():
     """Render the form for adding a new vehicle entry."""
     st.header("📝 Add Vehicle Entry")
+    
+    # Quick-select from known vehicles
+    known_vehicles = get_known_vehicles()
+    
+    if known_vehicles:
+        st.subheader("⚡ Quick Select Known Vehicle")
+        vehicle_options = ["-- Select a known vehicle to auto-fill --"] + [v['label'] for v in known_vehicles]
+        selected = st.selectbox(
+            "Pick from previously seen vehicles:",
+            vehicle_options,
+            key="quick_select_vehicle"
+        )
+        
+        if selected != vehicle_options[0]:
+            # Find the selected vehicle
+            idx = vehicle_options.index(selected) - 1
+            vehicle = known_vehicles[idx]
+            st.session_state['prefill_plate'] = vehicle['license_plate']
+            st.session_state['prefill_tag'] = vehicle['tag_number']
+            st.session_state['prefill_make'] = vehicle['make']
+            st.session_state['prefill_model'] = vehicle['model']
+        else:
+            st.session_state.pop('prefill_plate', None)
+            st.session_state.pop('prefill_tag', None)
+            st.session_state.pop('prefill_make', None)
+            st.session_state.pop('prefill_model', None)
+    
+    st.markdown("---")
+    
+    # Pre-fill values
+    default_plate = st.session_state.get('prefill_plate', '')
+    default_tag = st.session_state.get('prefill_tag', '')
+    default_make = st.session_state.get('prefill_make', '')
+    default_model = st.session_state.get('prefill_model', '')
     
     with st.form("vehicle_entry_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -100,13 +170,14 @@ def add_vehicle_entry_form():
         with col1:
             license_plate = st.text_input(
                 "License Plate*",
+                value=default_plate,
                 help="License plate will be automatically normalized to uppercase"
             )
-            make = st.text_input("Make*")
+            make = st.text_input("Make", value=default_make)
         
         with col2:
-            tag_number = st.text_input("Tag Number*")
-            model = st.text_input("Model*")
+            tag_number = st.text_input("Tag Number*", value=default_tag)
+            model = st.text_input("Model", value=default_model)
         
         # Warning and Tow checkboxes
         col3, col4 = st.columns(2)
@@ -130,8 +201,8 @@ def add_vehicle_entry_form():
         
         if submitted:
             # Validate required fields
-            if not all([license_plate, tag_number, make, model]):
-                st.error("❌ Please fill in all required fields (marked with *)")
+            if not all([license_plate, tag_number]):
+                st.error("❌ Please fill in at least License Plate and Tag Number")
                 return
             
             # Normalize license plate
@@ -184,6 +255,12 @@ def add_vehicle_entry_form():
                 if success:
                     st.success(f"✅ Entry added successfully for {normalized_plate}")
                     
+                    # Clear prefill
+                    st.session_state.pop('prefill_plate', None)
+                    st.session_state.pop('prefill_tag', None)
+                    st.session_state.pop('prefill_make', None)
+                    st.session_state.pop('prefill_model', None)
+                    
                     # Reload data
                     load_data()
                     st.rerun()
@@ -229,7 +306,9 @@ def show_scoreboard():
         unique_days = row['Unique Days Parked']
         last_seen = row['Last Seen']
         tag = row['Tag Number']
-        make_model = f"{row['Make']} {row['Model']}"
+        make = str(row['Make']).strip() if pd.notna(row['Make']) else ""
+        model = str(row['Model']).strip() if pd.notna(row['Model']) else ""
+        make_model = f"{make} {model}".strip()
         warned = row['Warned']
         last_warned = row['Last Warned Date']
         towed = row['Towed']
@@ -237,49 +316,52 @@ def show_scoreboard():
         
         # Determine color based on status
         if towed:
-            card_color = "#ffcccc"  # Light red for towed
+            card_color = "#5c1a1a"  # Dark red for towed
+            text_color = "#f8d7da"
             status_emoji = "🚨"
             status_text = "TOWED"
         elif warned:
-            card_color = "#fff4cc"  # Light yellow for warned
+            card_color = "#5c4a1a"  # Dark amber for warned
+            text_color = "#fff3cd"
             status_emoji = "⚠️"
             status_text = "WARNED"
         else:
-            card_color = "#f0f0f0"  # Light gray for normal
+            card_color = "#2a2a2a"  # Dark gray for normal
+            text_color = "#e0e0e0"
             status_emoji = "✓"
             status_text = "Active"
         
         # Create card
         with st.container():
+            make_model_line = f"<p style='margin: 5px 0;'><strong>{make_model}</strong> | Tag: {tag}</p>" if make_model else f"<p style='margin: 5px 0;'>Tag: {tag}</p>"
+            warned_info = f" | Last Warned: {last_warned}" if warned and last_warned else ""
+            towed_info = f" | Towed On: {towed_date}" if towed and towed_date else ""
             st.markdown(
-                f"""
-                <div style="background-color: {card_color}; padding: 15px; border-radius: 5px; margin-bottom: 10px;">
-                    <h4 style="margin: 0;">{status_emoji} {plate}</h4>
-                    <p style="margin: 5px 0;"><strong>{make_model}</strong> | Tag: {tag}</p>
-                    <p style="margin: 5px 0;">
-                        Unique Days Parked: <strong>{unique_days}</strong> | 
-                        Last Seen: {last_seen.strftime('%Y-%m-%d %H:%M') if pd.notna(last_seen) else 'N/A'}
-                    </p>
-                    <p style="margin: 5px 0;">
-                        Status: <strong>{status_text}</strong>
-                        {f" | Last Warned: {last_warned}" if warned and last_warned else ""}
-                        {f" | Towed On: {towed_date}" if towed and towed_date else ""}
-                    </p>
-                </div>
-                """,
+                f"""<div style="background-color: {card_color}; color: {text_color}; padding: 15px; border-radius: 5px; margin-bottom: 10px;">
+                    <h4 style="margin: 0; color: {text_color};">{status_emoji} {plate}</h4>
+                    {make_model_line}
+                    <p style="margin: 5px 0;">Unique Days Parked: <strong>{unique_days}</strong> | Last Seen: {last_seen.strftime('%Y-%m-%d %H:%M') if pd.notna(last_seen) else 'N/A'}</p>
+                    <p style="margin: 5px 0;">Status: <strong>{status_text}</strong>{warned_info}{towed_info}</p>
+                </div>""",
                 unsafe_allow_html=True
             )
             
-            # Quick add button
-            if st.button(f"➕ Quick Add", key=f"quick_add_{plate}"):
-                st.session_state.quick_add_vehicle = {
-                    'license_plate': plate,
-                    'tag_number': tag,
-                    'make': row['Make'],
-                    'model': row['Model']
-                }
-                st.session_state.show_quick_add = True
-                st.rerun()
+            # Quick add and View History buttons
+            btn_col1, btn_col2, _ = st.columns([1, 1, 3])
+            with btn_col1:
+                if st.button(f"➕ Quick Add", key=f"quick_add_{plate}"):
+                    st.session_state.quick_add_vehicle = {
+                        'license_plate': plate,
+                        'tag_number': tag,
+                        'make': row['Make'],
+                        'model': row['Model']
+                    }
+                    st.session_state.show_quick_add = True
+                    st.rerun()
+            with btn_col2:
+                if st.button(f"🔍 History", key=f"history_{plate}"):
+                    st.session_state.search_plate_prefill = plate
+                    st.rerun()
 
 
 def show_quick_add_modal():
@@ -384,23 +466,120 @@ def show_vehicle_history():
     """Render vehicle history search and display."""
     st.header("🔍 Vehicle History")
     
-    search_plate = st.text_input(
-        "Search License Plate (full or partial)",
-        help="Search supports partial matching. Enter part of a license plate to find matches."
-    )
+    # Build dropdown options from historical data
+    historical = st.session_state.get('historical_data', pd.DataFrame())
+    plate_options = []
+    tag_options = []
+    make_options = []
+    model_options = []
     
-    if search_plate:
-        normalized_search = st.session_state.compliance_engine.normalize_license_plate(search_plate)
-        
+    if not historical.empty:
+        if 'License Plate' in historical.columns:
+            plate_options = sorted(historical['License Plate'].dropna().unique().tolist())
+        if 'Tag Number' in historical.columns:
+            tag_options = sorted([str(t) for t in historical['Tag Number'].dropna().unique().tolist() if str(t).strip()])
+        if 'Make' in historical.columns:
+            make_options = sorted([str(m) for m in historical['Make'].dropna().unique().tolist() if str(m).strip()])
+        if 'Model' in historical.columns:
+            model_options = sorted([str(m) for m in historical['Model'].dropna().unique().tolist() if str(m).strip()])
+    
+    st.markdown("Search by any field below. You can type to filter or pick from the dropdown.")
+    
+    # Check if there's a prefill from scoreboard History button
+    prefill_plate = st.session_state.get('search_plate_prefill', '')
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # License plate - combo of text input and selectbox
+        search_plate = st.text_input(
+            "License Plate (type full or partial)",
+            value=prefill_plate,
+            help="Partial matching supported — enter part of a plate to find matches"
+        )
+        # Clear prefill after it's been used in the text input
+        if prefill_plate:
+            st.session_state.pop('search_plate_prefill', None)
+        plate_dropdown = st.selectbox(
+            "Or pick from known plates:",
+            [""] + plate_options,
+            key="plate_dropdown"
+        )
+    
+    with col2:
+        search_tag = st.text_input(
+            "Tag Number (type full or partial)",
+            help="Search by parking tag number"
+        )
+        tag_dropdown = st.selectbox(
+            "Or pick from known tags:",
+            [""] + tag_options,
+            key="tag_dropdown"
+        )
+    
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        search_make = st.text_input(
+            "Make (type full or partial)",
+            help="Search by vehicle make"
+        )
+        make_dropdown = st.selectbox(
+            "Or pick from known makes:",
+            [""] + make_options,
+            key="make_dropdown"
+        )
+    
+    with col4:
+        search_model = st.text_input(
+            "Model (type full or partial)",
+            help="Search by vehicle model"
+        )
+        model_dropdown = st.selectbox(
+            "Or pick from known models:",
+            [""] + model_options,
+            key="model_dropdown"
+        )
+    
+    # Determine the effective search values (text input takes priority, then dropdown)
+    effective_plate = search_plate.strip() or plate_dropdown
+    effective_tag = search_tag.strip() or tag_dropdown
+    effective_make = search_make.strip() or make_dropdown
+    effective_model = search_model.strip() or model_dropdown
+    
+    # Only search if at least one field has a value
+    if any([effective_plate, effective_tag, effective_make, effective_model]):
         with st.spinner("Searching..."):
-            history = st.session_state.sheets_manager.get_vehicle_history(normalized_search)
+            all_data = st.session_state.sheets_manager.get_all_historical_data()
+        
+        if all_data.empty:
+            st.warning("No historical data available.")
+            return
+        
+        # Apply filters
+        mask = pd.Series([True] * len(all_data), index=all_data.index)
+        
+        if effective_plate:
+            normalized_plate = st.session_state.compliance_engine.normalize_license_plate(effective_plate)
+            mask &= all_data['License Plate'].str.contains(normalized_plate, case=False, na=False)
+        
+        if effective_tag:
+            mask &= all_data['Tag Number'].astype(str).str.contains(effective_tag, case=False, na=False)
+        
+        if effective_make:
+            mask &= all_data['Make'].str.contains(effective_make, case=False, na=False)
+        
+        if effective_model:
+            mask &= all_data['Model'].str.contains(effective_model, case=False, na=False)
+        
+        history = all_data[mask].sort_values('Timestamp', ascending=False)
         
         if history.empty:
-            st.warning(f"No records found for '{normalized_search}'")
+            st.warning("No records found matching your search criteria.")
         else:
-            st.success(f"Found {len(history)} records for license plates matching '{normalized_search}'")
+            st.success(f"Found {len(history)} matching records")
             
-            # Group by license plate if multiple matches
+            # Group by license plate
             unique_plates = history['License Plate'].unique()
             
             for plate in unique_plates:
@@ -443,12 +622,68 @@ def show_vehicle_history():
                 st.markdown("---")
 
 
+def show_rules():
+    """Display parking enforcement rules."""
+    st.header("📜 Parking Enforcement Rules")
+
+    st.markdown("""
+    ### General Parking Requirements
+
+    1. **Every vehicle** parked in guest/visitor spots **must display** an HOA-issued placard 
+       or paper parking tag at all times.
+    2. Vehicles without a valid tag or placard are **subject to immediate towing** without warning.
+
+    ---
+
+    ### 9-Day / 30-Day Rule
+
+    3. Guest vehicles **cannot be parked more than 9 unique days** in any rolling 30-day period.
+       - Multiple sightings on the same calendar day count as **1 day**.
+       - The 30-day window rolls forward daily (it is not a fixed calendar month).
+
+    ---
+
+    ### Warning & Towing Policy
+
+    4. **First violation** (more than 9 days in a 30-day period):
+       - The vehicle must receive **one written warning**.
+       - The warning is logged with a timestamp.
+
+    5. **Continued parking after warning** (same 30-day period):
+       - The vehicle is **eligible for towing immediately** — no additional warning required.
+
+    6. **Future violations** (different 30-day period, but vehicle was previously warned):
+       - The vehicle is **eligible for towing immediately** — the prior warning carries forward permanently.
+
+    ---
+
+    ### Summary Table
+
+    | Scenario | Action |
+    |----------|--------|
+    | No tag/placard displayed | Tow immediately |
+    | ≤ 9 unique days in 30-day window | Compliant — no action |
+    | > 9 days, never warned before | Issue warning |
+    | > 9 days, warned in current period | Eligible for tow |
+    | > 9 days, warned in a prior period | Eligible for tow |
+
+    ---
+
+    ### Notes
+
+    - Warnings are **permanent** — once a vehicle has been warned, any future 9-day violation 
+      in any period makes it immediately eligible for towing.
+    - The scoreboard tracks unique parking days automatically from logged sightings.
+    - Always log a sighting **before** issuing a warning or tow so the record is complete.
+    """)
+
+
 def main():
     """Main application entry point."""
     
     # Page config
     st.set_page_config(
-        page_title="HOA Parking Compliance Tracker",
+        page_title="Station 121 HOA Parking Compliance",
         page_icon="🚗",
         layout="wide",
         initial_sidebar_state="collapsed"
@@ -462,16 +697,32 @@ def main():
         load_data()
     
     # App title
-    st.title("🚗 HOA Guest Parking Compliance Tracker")
+    st.title("🚗 Station 121 HOA Guest Parking Compliance Tracker")
     st.markdown("Track and enforce guest parking rules with ease")
+    
+    # Quick links
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/edit"
+    drive_url = f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}"
+    st.markdown(
+        f"📎 [Open Google Sheet]({sheet_url}) &nbsp;|&nbsp; "
+        f"📂 [Open Google Drive]({drive_url})"
+    )
     
     # Handle quick add modal
     if st.session_state.get('show_quick_add', False):
         show_quick_add_modal()
         return
     
+    # Handle history view from scoreboard
+    if st.session_state.get('search_plate_prefill'):
+        if st.button("← Back to Scoreboard"):
+            st.session_state.pop('search_plate_prefill', None)
+            st.rerun()
+        show_vehicle_history()
+        return
+    
     # Create tabs
-    tab1, tab2, tab3 = st.tabs(["📝 Add Vehicle", "📊 Scoreboard", "🔍 Vehicle History"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 Add Vehicle", "📊 Scoreboard", "🔍 Vehicle History", "📜 Rules"])
     
     with tab1:
         add_vehicle_entry_form()
@@ -482,11 +733,14 @@ def main():
     with tab3:
         show_vehicle_history()
     
+    with tab4:
+        show_rules()
+    
     # Footer
     st.markdown("---")
     st.markdown(
         "<div style='text-align: center; color: gray;'>"
-        "HOA Guest Parking Compliance Tracker | "
+        "Station 121 HOA Guest Parking Compliance Tracker | "
         f"Data updates every refresh | "
         f"Tracking last 30 days"
         "</div>",

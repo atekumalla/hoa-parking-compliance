@@ -1,17 +1,20 @@
-# HOA Guest Parking Compliance Tracker
+# Station 121 HOA Guest Parking Compliance Tracker
 
 A Streamlit web application for HOA volunteers to track guest parking violations, enforce parking rules, and maintain compliance records using Google Sheets as the backend database.
 
 ## Features
 
 - 📝 Log vehicle sightings with license plate, tag number, make, and model
+- ⚡ Quick-select dropdown to auto-fill previously seen vehicles when adding entries
 - 📸 Optional photo uploads stored in Google Drive with monthly organization
-- 📊 Real-time scoreboard showing most frequent violators
+- 📊 Real-time scoreboard showing most frequent violators with dark-themed cards
 - ⚠️ Automated tracking of 9-day/30-day parking rule violations
-- 🔍 Vehicle history search with full compliance timeline
-- 🚀 Quick-add functionality for frequently seen vehicles
+- 🔍 Vehicle history search by license plate, tag number, make, or model (with dropdowns)
+- 🚀 Quick-add and History buttons on each scoreboard card
 - 🎨 Color-coded visual indicators for warned and towed vehicles
 - 📅 Automatic monthly tab/folder creation
+- 📎 Quick links to Google Sheet and Google Drive from the app header
+- 📜 Built-in Rules page documenting all parking enforcement policies
 
 ## Parking Rules Enforced
 
@@ -142,33 +145,42 @@ The application will open in your default browser at `http://localhost:8501`
 
 ### Logging a Vehicle
 
-1. Navigate to the **Add Vehicle Entry** tab
-2. Enter the license plate number (automatically normalized to uppercase)
-3. Enter the parking tag number
-4. Enter the make and model
-5. Optionally upload a photo (max 10MB, any image format)
-6. Check **Warned** or **Towed** if applicable (timestamps are auto-captured)
-7. Click **Submit**
-
-### Quick Add
-
-1. View the **Scoreboard** tab to see frequently seen vehicles
-2. Click the **Quick Add** button next to any vehicle
-3. The license plate, tag, make, and model are pre-filled
-4. Optionally upload a new photo
-5. Update warning/tow status if needed
+1. Navigate to the **📝 Add Vehicle** tab
+2. **Quick Select**: Use the dropdown at the top to pick a previously seen vehicle — this auto-fills all fields
+3. Or manually enter the license plate and tag number (make/model are optional)
+4. Optionally upload a photo (max 10MB, any image format)
+5. Check **Warned** or **Towed** if applicable (timestamps are auto-captured)
 6. Click **Submit**
+
+### Scoreboard
+
+1. View the **📊 Scoreboard** tab to see the top vehicles in the last 30 days
+2. Cards are color-coded: dark gray (active), dark amber (warned), dark red (towed)
+3. Each card shows unique days parked, last seen date, and status
+4. Click **➕ Quick Add** to log a new sighting for that vehicle (pre-filled)
+5. Click **🔍 History** to jump directly to that vehicle's full history
 
 ### Vehicle History
 
-1. Go to the **Vehicle History** tab
-2. Enter a full or partial license plate number
-3. View all historical entries for matching vehicles
-4. See timeline of warnings, tows, and photos
+1. Go to the **🔍 Vehicle History** tab (or click History from the scoreboard)
+2. Search by any combination of:
+   - **License Plate** — type full or partial, or pick from dropdown
+   - **Tag Number** — type or pick from dropdown
+   - **Make** — type or pick from dropdown
+   - **Model** — type or pick from dropdown
+3. Multiple filters can be combined (e.g., search by tag AND make)
+4. View all historical entries, warnings, tows, and photos for matching vehicles
+
+### Rules
+
+The **📜 Rules** tab displays all parking enforcement rules including:
+- Tag/placard requirements
+- The 9-day/30-day rule
+- Warning and towing policy with a summary table
 
 ### Refreshing Data
 
-Click the **Refresh Data** button in the Scoreboard tab to reload cache and recalculate warning counts from the Google Sheet.
+Click the **🔄 Refresh Data** button in the Scoreboard tab to reload cache and recalculate warning counts from the Google Sheet.
 
 ## Data Structure
 
