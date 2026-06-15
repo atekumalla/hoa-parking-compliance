@@ -6,6 +6,7 @@ A web application for tracking and enforcing HOA guest parking rules.
 
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import streamlit as st
 import pandas as pd
@@ -126,9 +127,54 @@ def get_known_vehicles():
     return sorted(vehicle_list, key=lambda x: x['license_plate'])
 
 
+def _show_todays_entries():
+    """Display entries added today (PST) to help avoid duplicates."""
+    if not st.session_state.get('data_loaded', False):
+        return
+    
+    historical = st.session_state.get('historical_data', pd.DataFrame())
+    if historical.empty:
+        return
+    
+    pst = ZoneInfo("America/Los_Angeles")
+    today_pst = datetime.now(pst).date()
+    
+    # Filter entries for today in PST
+    df = historical.copy()
+    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+    # Localize naive timestamps to PST
+    df['Timestamp_PST'] = df['Timestamp'].dt.tz_localize('America/Los_Angeles', ambiguous='NaT', nonexistent='shift_forward')
+    df_today = df[df['Timestamp_PST'].dt.date == today_pst]
+    
+    if df_today.empty:
+        st.info("ℹ️ No entries have been added today yet.")
+        return
+    
+    st.subheader(f"📋 Entries Added Today ({today_pst.strftime('%b %d, %Y')} PST)")
+    
+    # Prepare display table
+    display_df = df_today[['Timestamp', 'License Plate', 'Tag Number', 'Make', 'Model', 'Warned', 'Towed']].copy()
+    display_df['Time'] = display_df['Timestamp'].dt.strftime('%I:%M %p')
+    display_df = display_df[['Time', 'License Plate', 'Tag Number', 'Make', 'Model', 'Warned', 'Towed']]
+    display_df = display_df.sort_values('Time', ascending=False).reset_index(drop=True)
+    # Ensure all columns are strings to avoid Arrow serialization issues with mixed types
+    display_df = display_df.astype(str)
+    
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption(f"🕐 {len(display_df)} entr{'y' if len(display_df) == 1 else 'ies'} today — review before adding a new one.")
+    st.markdown("---")
+
+
 def add_vehicle_entry_form():
     """Render the form for adding a new vehicle entry."""
     st.header("📝 Add Vehicle Entry")
+    
+    # Show today's entries to avoid duplicates
+    _show_todays_entries()
     
     # Quick-select from known vehicles
     known_vehicles = get_known_vehicles()

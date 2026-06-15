@@ -85,7 +85,9 @@ class DriveManager:
             results = self.service.files().list(
                 q=query,
                 spaces='drive',
-                fields='files(id, name)'
+                fields='files(id, name)',
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
             ).execute()
             
             items = results.get('files', [])
@@ -119,7 +121,8 @@ class DriveManager:
             
             folder = self.service.files().create(
                 body=file_metadata,
-                fields='id'
+                fields='id',
+                supportsAllDrives=True
             ).execute()
             
             return folder.get('id')
@@ -278,7 +281,8 @@ class DriveManager:
             file = self.service.files().create(
                 body=file_metadata,
                 media_body=media,
-                fields='id, webViewLink'
+                fields='id, webViewLink',
+                supportsAllDrives=True
             ).execute()
             
             file_id = file.get('id')
@@ -291,7 +295,8 @@ class DriveManager:
             
             self.service.permissions().create(
                 fileId=file_id,
-                body=permission
+                body=permission,
+                supportsAllDrives=True
             ).execute()
             
             # Get shareable link

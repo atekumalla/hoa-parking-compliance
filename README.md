@@ -82,11 +82,31 @@ A Streamlit web application for HOA volunteers to track guest parking violations
    - Uncheck "Notify people"
    - Click **Share**
 
-### Step 6: Create Google Drive Folder
+### Step 6: Create Google Drive Folder (Shared Drive Required)
+
+> ⚠️ **Important**: You must use a **Shared Drive** (not a regular "My Drive" folder). Service accounts have no personal Drive storage quota, so uploads to regular folders will fail with a "storage quota" error. Files in a Shared Drive use the organization's pooled storage instead.
+
+#### Option A: Google Workspace (Recommended)
+
+1. Go to [Google Drive](https://drive.google.com/) > **Shared Drives** (in the left sidebar)
+2. Click **+ New** to create a Shared Drive (e.g., "HOA Parking")
+3. Add your service account email as a **Content Manager**:
+   - Click the Shared Drive name > **Manage members**
+   - Paste the service account email (found in your JSON key file as `client_email`)
+   - Set role to **Content Manager**
+   - Click **Send**
+4. Create a folder inside the Shared Drive (e.g., "Parking Photos")
+5. **Important**: Copy the Folder ID from the URL
+   - URL format: `https://drive.google.com/drive/folders/YOUR_FOLDER_ID`
+   - The Folder ID is the string after `/folders/`
+
+#### Option B: Personal Gmail (No Shared Drives Available)
+
+If you're on a free personal Gmail account, Shared Drives are not available. As an alternative:
 
 1. Go to [Google Drive](https://drive.google.com/)
 2. Create a new folder (e.g., "HOA Parking Photos")
-3. **Important**: Copy the Folder ID from the URL
+3. Copy the Folder ID from the URL
    - URL format: `https://drive.google.com/drive/folders/YOUR_FOLDER_ID`
    - The Folder ID is the string after `/folders/`
 4. Share the folder with your service account:
@@ -95,6 +115,8 @@ A Streamlit web application for HOA volunteers to track guest parking violations
    - Give it **Editor** access
    - Uncheck "Notify people"
    - Click **Share**
+
+> **Note for Option B**: If you encounter "storage quota exceeded" errors, you may need to use [domain-wide delegation](https://developers.google.com/identity/protocols/oauth2/service-account#delegatingauthority) to have the service account impersonate your personal account for Drive uploads.
 
 ### Step 7: Configure Environment Variables
 
@@ -234,8 +256,12 @@ HOA Parking Photos/
 
 ### Photo Upload Fails
 
-- **Error**: Photo upload errors
-  - **Solution**: Check Drive folder permissions and verify `GOOGLE_DRIVE_FOLDER_ID` is correct
+- **Error**: "Service accounts don't have storage quota" or "storageQuotaExceeded"
+  - **Cause**: Service accounts have 0 bytes of personal Drive storage. Files uploaded to regular folders are owned by the service account, which has no quota.
+  - **Solution**: Use a **Shared Drive** (Team Drive) instead of a regular folder. See Step 6 above for setup instructions. The `GOOGLE_DRIVE_FOLDER_ID` must point to a folder inside a Shared Drive.
+
+- **Error**: General photo upload errors / "Permission denied"
+  - **Solution**: Ensure the service account has **Content Manager** access on the Shared Drive, and verify `GOOGLE_DRIVE_FOLDER_ID` is correct
 
 ### Environment Variables Not Loaded
 
