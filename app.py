@@ -14,6 +14,7 @@ import pandas as pd
 from sheets_manager import SheetsManager
 from drive_manager import DriveManager
 from compliance_engine import ComplianceEngine
+from vehicle_recognition import analyze_vehicle_photo, is_recognition_available
 
 
 # Load environment variables
@@ -204,6 +205,66 @@ def add_vehicle_entry_form():
     
     st.markdown("---")
     
+    # --- Photo Analysis Section (AI auto-fill) ---
+    if is_recognition_available():
+        st.subheader("📸 Auto-Fill from Photo")
+        st.caption("Upload a vehicle photo to automatically detect plate, make, model & color")
+        
+        analysis_photo = st.file_uploader(
+            "Upload a vehicle photo for AI analysis",
+            type=['jpg', 'jpeg', 'png', 'webp'],
+            key="analysis_photo_uploader",
+            label_visibility="collapsed"
+        )
+        
+        if analysis_photo is not None:
+            col_preview, col_action = st.columns([1, 1])
+            with col_preview:
+                st.image(analysis_photo, caption="Uploaded photo", use_container_width=True)
+            with col_action:
+                if st.button("🔍 Analyze Photo", type="primary", use_container_width=True):
+                    with st.spinner("Analyzing vehicle photo with AI..."):
+                        try:
+                            image_bytes = analysis_photo.getvalue()
+                            result = analyze_vehicle_photo(image_bytes)
+                            
+                            # Store results in session state to populate form fields
+                            if result.license_plate:
+                                st.session_state['prefill_plate'] = result.license_plate
+                            if result.make:
+                                st.session_state['prefill_make'] = result.make
+                            if result.model:
+                                st.session_state['prefill_model'] = result.model
+                            if result.color:
+                                st.session_state['prefill_color'] = result.color
+                            
+                            st.success("✅ Vehicle analyzed! Fields auto-filled below.")
+                            if result.confidence_notes:
+                                st.info(f"ℹ️ {result.confidence_notes}")
+                            
+                            # Store the photo bytes so it can also be uploaded with the entry
+                            st.session_state['analysis_photo_bytes'] = image_bytes
+                            st.session_state['analysis_photo_name'] = analysis_photo.name
+                            
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Analysis failed: {str(e)}")
+        
+        # Show what was detected (persistent after rerun)
+        if any(st.session_state.get(k) for k in ['prefill_plate', 'prefill_make', 'prefill_model', 'prefill_color']):
+            detected_parts = []
+            if st.session_state.get('prefill_plate'):
+                detected_parts.append(f"**Plate:** {st.session_state['prefill_plate']}")
+            if st.session_state.get('prefill_make'):
+                detected_parts.append(f"**Make:** {st.session_state['prefill_make']}")
+            if st.session_state.get('prefill_model'):
+                detected_parts.append(f"**Model:** {st.session_state['prefill_model']}")
+            if st.session_state.get('prefill_color'):
+                detected_parts.append(f"**Color:** {st.session_state['prefill_color']}")
+            st.success("🤖 AI Detected: " + " | ".join(detected_parts))
+        
+        st.markdown("---")
+    
     # Pre-fill values
     default_plate = st.session_state.get('prefill_plate', '')
     default_tag = st.session_state.get('prefill_tag', '')
@@ -220,6 +281,7 @@ def add_vehicle_entry_form():
                 help="License plate will be automatically normalized to uppercase"
             )
             make = st.text_input("Make", value=default_make)
+            color = st.text_input("Color", value=st.session_state.get('prefill_color', ''))
         
         with col2:
             tag_number = st.text_input("Tag Number*", value=default_tag)
@@ -239,8 +301,17 @@ def add_vehicle_entry_form():
         photo_file = st.file_uploader(
             "Upload Photo (Optional)",
             type=['jpg', 'jpeg', 'png', 'heic', 'webp', 'bmp', 'gif'],
-            help="Max file size: 10MB. Photo will be converted to JPG."
+            help="Max file size: 10MB. Photo will be converted to JPG. "
+                 "If you already analyzed a photo above, it will be used automatically."
         )
+        
+        # Option to use the analysis photo
+        use_analysis_photo = False
+        if st.session_state.get('analysis_photo_bytes') and not photo_file:
+            use_analysis_photo = st.checkbox(
+                "📎 Attach the analyzed photo to this entry",
+                value=True
+            )
         
         # Submit button
         submitted = st.form_submit_button("✅ Submit Entry", use_container_width=True)
@@ -266,14 +337,23 @@ def add_vehicle_entry_form():
             
             # Handle photo upload
             photo_url = None
+            upload_bytes = None
+            upload_name = None
+            
             if photo_file is not None:
+                upload_bytes = photo_file.read()
+                upload_name = photo_file.name
+            elif use_analysis_photo and st.session_state.get('analysis_photo_bytes'):
+                upload_bytes = st.session_state['analysis_photo_bytes']
+                upload_name = st.session_state.get('analysis_photo_name', 'analyzed_photo.jpg')
+            
+            if upload_bytes is not None:
                 with st.spinner("Uploading photo to Google Drive..."):
-                    file_bytes = photo_file.read()
                     success, url, error = st.session_state.drive_manager.upload_photo(
-                        file_bytes,
+                        upload_bytes,
                         normalized_plate,
                         tag_number,
-                        photo_file.name
+                        upload_name
                     )
                     
                     if success:
@@ -306,6 +386,9 @@ def add_vehicle_entry_form():
                     st.session_state.pop('prefill_tag', None)
                     st.session_state.pop('prefill_make', None)
                     st.session_state.pop('prefill_model', None)
+                    st.session_state.pop('prefill_color', None)
+                    st.session_state.pop('analysis_photo_bytes', None)
+                    st.session_state.pop('analysis_photo_name', None)
                     
                     # Reload data
                     load_data()
