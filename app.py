@@ -24,7 +24,7 @@ load_dotenv()
 
 # Configuration
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
-GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID', '')  # Now optional
+GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
 GOOGLE_CREDENTIALS_PATH = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 SCOREBOARD_TOP_N = int(os.getenv('SCOREBOARD_TOP_N', '20'))
 
@@ -33,15 +33,13 @@ def initialize_app():
     """Initialize application with required managers and data."""
     
     # Validate environment variables
-    if not all([GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_PATH]):
+    if not all([GOOGLE_SHEET_ID, GOOGLE_DRIVE_FOLDER_ID, GOOGLE_CREDENTIALS_PATH]):
         st.error("❌ Missing required environment variables. Please check your .env file.")
         st.info("""
         Required variables:
         - GOOGLE_SHEET_ID
+        - GOOGLE_DRIVE_FOLDER_ID
         - GOOGLE_APPLICATION_CREDENTIALS
-        
-        Optional:
-        - GOOGLE_DRIVE_FOLDER_ID (auto-created if not provided)
         
         See README.md for setup instructions.
         """)
@@ -63,8 +61,8 @@ def initialize_app():
         
         if 'drive_manager' not in st.session_state:
             st.session_state.drive_manager = DriveManager(
-                GOOGLE_CREDENTIALS_PATH,
-                legacy_folder_id=GOOGLE_DRIVE_FOLDER_ID if GOOGLE_DRIVE_FOLDER_ID else None
+                GOOGLE_DRIVE_FOLDER_ID,
+                GOOGLE_CREDENTIALS_PATH
             )
         
         if 'compliance_engine' not in st.session_state:
@@ -871,30 +869,19 @@ def show_storage_management():
     
     drive_mgr = st.session_state.drive_manager
     
-    # --- Storage Quota ---
+    # --- Storage Usage ---
     st.subheader("📊 Storage Usage")
     
-    quota = drive_mgr.get_storage_quota()
+    usage = drive_mgr.get_storage_usage()
     
-    if quota.get('error'):
-        st.warning(f"⚠️ Could not fetch quota: {quota['error']}")
+    if usage.get('error'):
+        st.warning(f"⚠️ Could not fetch usage: {usage['error']}")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("Used", quota['used_human'])
+        st.metric("Total Photos Stored", usage['file_count'])
     with col2:
-        st.metric("Total", quota['total_human'])
-    with col3:
-        st.metric("Usage", f"{quota['used_percent']}%")
-    
-    # Progress bar for storage
-    usage_fraction = min(quota['used_percent'] / 100.0, 1.0)
-    st.progress(usage_fraction)
-    
-    if quota['used_percent'] > 95:
-        st.error("🚨 Storage is nearly full! Delete photos immediately to continue uploading.")
-    elif quota['used_percent'] > 80:
-        st.warning("⚠️ Storage is above 80%. Consider cleaning up old photos.")
+        st.metric("Space Used", usage['used_human'])
     
     st.markdown("---")
     
@@ -902,7 +889,7 @@ def show_storage_management():
     st.subheader("📂 Photo Folder")
     drive_url = drive_mgr.get_folder_url()
     st.markdown(f"[Open Photos Folder in Google Drive]({drive_url})")
-    st.caption("This folder is publicly accessible — anyone with the link can view photos.")
+    st.caption("Photos are stored in your shared Google Drive folder, organized by month.")
     
     st.markdown("---")
     

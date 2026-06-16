@@ -1,8 +1,9 @@
 """
 Google Drive Manager for HOA Parking Compliance Tracker.
 
-Manages photo uploads using the service account's own Drive storage.
-Auto-creates a folder on first use and makes it publicly accessible.
+Manages photo uploads to a Google Drive folder shared with the service account.
+The folder must be created by a user and shared (Editor) with the service account email.
+Includes storage management features for listing and deleting photos.
 """
 
 import os
@@ -17,29 +18,24 @@ from googleapiclient.http import MediaIoBaseUpload
 from googleapiclient.errors import HttpError
 
 
-# Folder name used by the service account (consistent across runs)
-HOA_FOLDER_NAME = "HOA-Parking-Compliance-Photos"
-
-
 class DriveManager:
-    """Manages Google Drive photo uploads with self-provisioning folder."""
+    """Manages Google Drive photo uploads to a user-shared folder."""
 
     MAX_FILE_SIZE_MB = 10
     MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-    def __init__(self, credentials_path: str, legacy_folder_id: str = None):
+    def __init__(self, folder_id: str, credentials_path: str):
         """
         Initialize DriveManager.
 
         Args:
+            folder_id: Google Drive folder ID (shared with service account as Editor).
             credentials_path: Path to Google service account JSON key file.
-            legacy_folder_id: (Optional) Previously configured folder ID for backwards compat.
         """
+        self.folder_id = folder_id
         self.credentials_path = credentials_path
-        self.legacy_folder_id = legacy_folder_id
         self._service = None
-        self._root_folder_id = None
-        self._monthly_folder_cache: Dict[str, str] = {}
+        self._monthly_folder_cache = {}
 
     @property
     def service(self):
@@ -52,69 +48,6 @@ class DriveManager:
             )
             self._service = build('drive', 'v3', credentials=creds)
         return self._service
-
-    @property
-    def root_folder_id(self) -> str:
-        """Get or create the root photo folder. Cached after first call."""
-        if self._root_folder_id is None:
-            self._root_folder_id = self._get_or_create_root_folder()
-        return self._root_folder_id
-
-    def _get_or_create_root_folder(self) -> str:
-        """
-        Find the existing HOA folder or create a new one.
-        Makes it publicly accessible via link.
-        """
-        # Search for existing folder by name (owned by this service account)
-        query = (
-            f"name = '{HOA_FOLDER_NAME}' and "
-            f"mimeType = 'application/vnd.google-apps.folder' and "
-            f"trashed = false"
-        )
-        results = self.service.files().list(
-            q=query,
-            spaces='drive',
-            fields='files(id, name)',
-            pageSize=1
-        ).execute()
-
-        files = results.get('files', [])
-
-        if files:
-            # Folder already exists — reuse it
-            folder_id = files[0]['id']
-        else:
-            # Create new folder
-            folder_metadata = {
-                'name': HOA_FOLDER_NAME,
-                'mimeType': 'application/vnd.google-apps.folder'
-            }
-            folder = self.service.files().create(
-                body=folder_metadata,
-                fields='id'
-            ).execute()
-            folder_id = folder['id']
-
-            # Make it publicly accessible (anyone with link can view)
-            self._set_public_access(folder_id)
-
-        return folder_id
-
-    def _set_public_access(self, file_or_folder_id: str):
-        """Set 'anyone with the link' can view permission."""
-        permission = {
-            'type': 'anyone',
-            'role': 'reader'
-        }
-        try:
-            self.service.permissions().create(
-                fileId=file_or_folder_id,
-                body=permission,
-                fields='id'
-            ).execute()
-        except Exception:
-            # Permission may already exist, ignore
-            pass
 
     def _get_or_create_monthly_folder(self, year_month: str) -> str:
         """
@@ -129,17 +62,18 @@ class DriveManager:
         if year_month in self._monthly_folder_cache:
             return self._monthly_folder_cache[year_month]
 
-        # Search for existing monthly folder
         query = (
             f"name = '{year_month}' and "
             f"mimeType = 'application/vnd.google-apps.folder' and "
-            f"'{self.root_folder_id}' in parents and "
+            f"'{self.folder_id}' in parents and "
             f"trashed = false"
         )
         results = self.service.files().list(
             q=query,
             spaces='drive',
             fields='files(id, name)',
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
             pageSize=1
         ).execute()
 
@@ -148,15 +82,15 @@ class DriveManager:
         if files:
             folder_id = files[0]['id']
         else:
-            # Create monthly subfolder
             folder_metadata = {
                 'name': year_month,
                 'mimeType': 'application/vnd.google-apps.folder',
-                'parents': [self.root_folder_id]
+                'parents': [self.folder_id]
             }
             folder = self.service.files().create(
                 body=folder_metadata,
-                fields='id'
+                fields='id',
+                supportsAllDrives=True
             ).execute()
             folder_id = folder['id']
 
@@ -165,18 +99,9 @@ class DriveManager:
 
     @staticmethod
     def convert_to_jpg(image_bytes: bytes) -> bytes:
-        """
-        Convert image to JPG format.
-
-        Args:
-            image_bytes: Original image bytes.
-
-        Returns:
-            Converted image as JPG bytes.
-        """
+        """Convert image to JPG format."""
         image = Image.open(BytesIO(image_bytes))
 
-        # Convert RGBA/P to RGB
         if image.mode in ('RGBA', 'LA', 'P'):
             background = Image.new('RGB', image.size, (255, 255, 255))
             if image.mode == 'P':
@@ -201,39 +126,28 @@ class DriveManager:
         """
         Upload a photo to the appropriate monthly folder.
 
-        Args:
-            file_bytes: Raw image bytes.
-            license_plate: Vehicle license plate (used in filename).
-            tag_number: Vehicle tag number (used in filename).
-            original_filename: Original file name for extension detection.
-
         Returns:
             Tuple of (success, photo_url, error_message)
         """
         try:
-            # Validate file size
             if len(file_bytes) > self.MAX_FILE_SIZE_BYTES:
                 size_mb = len(file_bytes) / (1024 * 1024)
                 return False, None, f"File size ({size_mb:.1f}MB) exceeds maximum ({self.MAX_FILE_SIZE_MB}MB)"
 
-            # Convert to JPG
             try:
                 jpg_bytes = self.convert_to_jpg(file_bytes)
             except Exception as e:
                 return False, None, f"Failed to process image: {str(e)}"
 
-            # Determine monthly folder
             now = datetime.now()
             year_month = now.strftime('%Y-%m')
             monthly_folder_id = self._get_or_create_monthly_folder(year_month)
 
-            # Build filename: PLATE_TAG_TIMESTAMP.jpg
             timestamp_str = now.strftime('%Y%m%d_%H%M%S')
             safe_plate = license_plate.replace(' ', '').replace('/', '_')
             safe_tag = str(tag_number).replace(' ', '').replace('/', '_')
             filename = f"{safe_plate}_{safe_tag}_{timestamp_str}.jpg"
 
-            # Upload
             file_metadata = {
                 'name': filename,
                 'parents': [monthly_folder_id]
@@ -248,11 +162,21 @@ class DriveManager:
             uploaded_file = self.service.files().create(
                 body=file_metadata,
                 media_body=media,
-                fields='id, webViewLink'
+                fields='id, webViewLink',
+                supportsAllDrives=True
             ).execute()
 
-            # Make the file publicly viewable
-            self._set_public_access(uploaded_file['id'])
+            # Make publicly viewable
+            try:
+                permission = {'type': 'anyone', 'role': 'reader'}
+                self.service.permissions().create(
+                    fileId=uploaded_file['id'],
+                    body=permission,
+                    fields='id',
+                    supportsAllDrives=True
+                ).execute()
+            except Exception:
+                pass
 
             file_url = f"https://drive.google.com/file/d/{uploaded_file['id']}/view"
             return True, file_url, None
@@ -262,53 +186,42 @@ class DriveManager:
         except Exception as e:
             return False, None, f"Unexpected error uploading photo: {str(e)}"
 
-    def get_storage_quota(self) -> Dict[str, any]:
+    def get_storage_usage(self) -> Dict[str, any]:
         """
-        Get storage usage and quota for the service account.
+        Calculate storage usage by summing file sizes in the shared folder.
 
         Returns:
-            Dict with 'used_bytes', 'total_bytes', 'used_percent',
-            'used_human', 'total_human'
+            Dict with 'used_bytes', 'used_human', 'file_count'
         """
         try:
-            about = self.service.about().get(
-                fields='storageQuota'
-            ).execute()
+            total_size = 0
+            file_count = 0
 
-            quota = about.get('storageQuota', {})
-            used = int(quota.get('usage', 0))
-            # Service accounts typically get 15GB
-            total = int(quota.get('limit', 15 * 1024 * 1024 * 1024))
-
-            percent = (used / total * 100) if total > 0 else 0
+            monthly_folders = self.list_monthly_folders()
+            for folder in monthly_folders:
+                files = self.list_files_in_folder(folder['id'])
+                for f in files:
+                    total_size += int(f.get('size', 0))
+                    file_count += 1
 
             return {
-                'used_bytes': used,
-                'total_bytes': total,
-                'used_percent': round(percent, 2),
-                'used_human': self._bytes_to_human(used),
-                'total_human': self._bytes_to_human(total),
+                'used_bytes': total_size,
+                'used_human': self._bytes_to_human(total_size),
+                'file_count': file_count,
             }
         except Exception as e:
             return {
                 'used_bytes': 0,
-                'total_bytes': 15 * 1024 * 1024 * 1024,
-                'used_percent': 0,
                 'used_human': 'Unknown',
-                'total_human': '15 GB',
+                'file_count': 0,
                 'error': str(e)
             }
 
     def list_monthly_folders(self) -> List[Dict[str, str]]:
-        """
-        List all monthly subfolders in the root folder.
-
-        Returns:
-            List of dicts with 'id', 'name' (sorted newest first).
-        """
+        """List all monthly subfolders (sorted newest first)."""
         try:
             query = (
-                f"'{self.root_folder_id}' in parents and "
+                f"'{self.folder_id}' in parents and "
                 f"mimeType = 'application/vnd.google-apps.folder' and "
                 f"trashed = false"
             )
@@ -317,20 +230,16 @@ class DriveManager:
                 spaces='drive',
                 fields='files(id, name)',
                 orderBy='name desc',
-                pageSize=100
+                pageSize=100,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
             ).execute()
-
             return results.get('files', [])
         except Exception:
             return []
 
     def list_files_in_folder(self, folder_id: str) -> List[Dict]:
-        """
-        List all files in a specific folder.
-
-        Returns:
-            List of dicts with 'id', 'name', 'size', 'createdTime'.
-        """
+        """List all files in a specific folder."""
         try:
             all_files = []
             page_token = None
@@ -346,7 +255,9 @@ class DriveManager:
                     spaces='drive',
                     fields='nextPageToken, files(id, name, size, createdTime)',
                     pageSize=100,
-                    pageToken=page_token
+                    pageToken=page_token,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True
                 ).execute()
 
                 all_files.extend(results.get('files', []))
@@ -358,36 +269,21 @@ class DriveManager:
         except Exception:
             return []
 
-    def list_files_in_date_range(
-        self, start_date: datetime, end_date: datetime
-    ) -> List[Dict]:
-        """
-        List all photo files created within a date range.
-
-        Args:
-            start_date: Start of range (inclusive).
-            end_date: End of range (inclusive).
-
-        Returns:
-            List of file dicts with 'id', 'name', 'size', 'createdTime'.
-        """
+    def list_files_in_date_range(self, start_date: datetime, end_date: datetime) -> List[Dict]:
+        """List all photo files created within a date range."""
         try:
             all_files = []
-
-            # Go through monthly folders that overlap with the date range
             monthly_folders = self.list_monthly_folders()
 
             for folder in monthly_folders:
-                folder_name = folder['name']  # e.g., '2026-06'
+                folder_name = folder['name']
                 try:
                     folder_date = datetime.strptime(folder_name, '%Y-%m')
-                    # Calculate end of that month
                     if folder_date.month == 12:
                         folder_end = datetime(folder_date.year + 1, 1, 1)
                     else:
                         folder_end = datetime(folder_date.year, folder_date.month + 1, 1)
 
-                    # Skip folders that don't overlap with date range
                     if folder_end <= start_date or folder_date > end_date:
                         continue
                 except ValueError:
@@ -410,42 +306,26 @@ class DriveManager:
             return []
 
     def delete_files(self, file_ids: List[str]) -> Tuple[int, int]:
-        """
-        Permanently delete files by ID.
-
-        Args:
-            file_ids: List of Google Drive file IDs to delete.
-
-        Returns:
-            Tuple of (success_count, fail_count)
-        """
+        """Permanently delete files by ID. Returns (success_count, fail_count)."""
         success = 0
         failed = 0
         for file_id in file_ids:
             try:
-                self.service.files().delete(fileId=file_id).execute()
+                self.service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
                 success += 1
             except Exception:
                 failed += 1
         return success, failed
 
     def delete_monthly_folder_contents(self, folder_id: str) -> Tuple[int, int]:
-        """
-        Delete all files inside a monthly folder.
-
-        Args:
-            folder_id: The monthly folder ID.
-
-        Returns:
-            Tuple of (success_count, fail_count)
-        """
+        """Delete all files inside a monthly folder."""
         files = self.list_files_in_folder(folder_id)
         file_ids = [f['id'] for f in files]
         return self.delete_files(file_ids)
 
     def get_folder_url(self) -> str:
-        """Get the public URL for the root photos folder."""
-        return f"https://drive.google.com/drive/folders/{self.root_folder_id}"
+        """Get the URL for the photos folder."""
+        return f"https://drive.google.com/drive/folders/{self.folder_id}"
 
     @staticmethod
     def _bytes_to_human(num_bytes: int) -> str:
