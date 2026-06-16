@@ -6,10 +6,12 @@ A web application for tracking and enforcing HOA guest parking rules.
 
 import os
 from datetime import datetime
+from io import BytesIO
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import streamlit as st
 import pandas as pd
+from PIL import Image, ImageOps
 
 from sheets_manager import SheetsManager
 from drive_manager import DriveManager
@@ -198,10 +200,12 @@ def add_vehicle_entry_form():
             st.session_state['prefill_make'] = vehicle['make']
             st.session_state['prefill_model'] = vehicle['model']
         else:
-            st.session_state.pop('prefill_plate', None)
-            st.session_state.pop('prefill_tag', None)
-            st.session_state.pop('prefill_make', None)
-            st.session_state.pop('prefill_model', None)
+            # Only clear prefill if NOT set by photo analysis
+            if not st.session_state.get('analysis_photo_bytes'):
+                st.session_state.pop('prefill_plate', None)
+                st.session_state.pop('prefill_tag', None)
+                st.session_state.pop('prefill_make', None)
+                st.session_state.pop('prefill_model', None)
     
     st.markdown("---")
     
@@ -220,7 +224,12 @@ def add_vehicle_entry_form():
         if analysis_photo is not None:
             col_preview, col_action = st.columns([1, 1])
             with col_preview:
-                st.image(analysis_photo, caption="Uploaded photo", use_container_width=True)
+                # Apply EXIF orientation to prevent rotation/flip
+                pil_image = Image.open(analysis_photo)
+                pil_image = ImageOps.exif_transpose(pil_image)
+                st.image(pil_image, caption="Uploaded photo", use_container_width=True)
+                # Reset file pointer for later use
+                analysis_photo.seek(0)
             with col_action:
                 if st.button("🔍 Analyze Photo", type="primary", use_container_width=True):
                     with st.spinner("Analyzing vehicle photo with AI..."):
