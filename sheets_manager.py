@@ -294,3 +294,45 @@ class SheetsManager:
             return len(warned_entries)
         
         return 0
+
+    def delete_entry(self, timestamp: str, license_plate: str) -> bool:
+        """
+        Delete an entry from the Google Sheet by matching timestamp and license plate.
+        
+        Args:
+            timestamp: The exact timestamp string of the entry to delete
+            license_plate: The license plate of the entry to delete
+            
+        Returns:
+            True if successfully deleted, False otherwise
+        """
+        try:
+            # Determine which tab the entry would be in based on timestamp
+            entry_date = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+            tab_name = self.get_month_tab_name(entry_date)
+            
+            try:
+                worksheet = self.spreadsheet.worksheet(tab_name)
+            except gspread.WorksheetNotFound:
+                return False
+            
+            # Get all values to find the row
+            all_values = worksheet.get_all_values()
+            
+            if len(all_values) <= 1:  # Only header row
+                return False
+            
+            # Find matching row (skip header at index 0)
+            for row_idx, row in enumerate(all_values[1:], start=2):  # gspread is 1-indexed, header is row 1
+                row_timestamp = row[0] if len(row) > 0 else ""
+                row_plate = row[1] if len(row) > 1 else ""
+                
+                if row_timestamp == timestamp and row_plate == license_plate:
+                    worksheet.delete_rows(row_idx)
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"Error deleting entry: {e}")
+            return False

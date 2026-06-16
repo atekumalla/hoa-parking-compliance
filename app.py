@@ -155,11 +155,31 @@ def _show_todays_entries():
     
     st.subheader(f"📋 Entries Added Today ({today_pst.strftime('%b %d, %Y')} PST)")
     
+    # Get 30-day rolling data for the "days in 30" count
+    rolling_data = st.session_state.get('rolling_data', pd.DataFrame())
+    
     # Prepare display table
     display_df = df_today[['Timestamp', 'License Plate', 'Tag Number', 'Make', 'Model', 'Warned', 'Towed']].copy()
     display_df['Time'] = display_df['Timestamp'].dt.strftime('%I:%M %p')
-    display_df = display_df[['Time', 'License Plate', 'Tag Number', 'Make', 'Model', 'Warned', 'Towed']]
+    
+    # Add 30-day unique days count
+    days_30 = []
+    for _, row in display_df.iterrows():
+        plate = row['License Plate']
+        if not rolling_data.empty:
+            count = st.session_state.compliance_engine.count_unique_parking_days(rolling_data, plate)
+        else:
+            count = 0
+        days_30.append(count)
+    display_df['Days (30d)'] = days_30
+    
+    display_df = display_df[['Time', 'License Plate', 'Tag Number', 'Make', 'Model', 'Days (30d)', 'Warned', 'Towed']]
     display_df = display_df.sort_values('Time', ascending=False).reset_index(drop=True)
+    
+    # Store original timestamps for deletion (before converting to string)
+    timestamps_for_delete = df_today.sort_values('Timestamp', ascending=False)['Timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S').tolist()
+    plates_for_delete = df_today.sort_values('Timestamp', ascending=False)['License Plate'].tolist()
+    
     # Ensure all columns are strings to avoid Arrow serialization issues with mixed types
     display_df = display_df.astype(str)
     
@@ -169,6 +189,38 @@ def _show_todays_entries():
         hide_index=True,
     )
     st.caption(f"🕐 {len(display_df)} entr{'y' if len(display_df) == 1 else 'ies'} today — review before adding a new one.")
+    
+    # Delete entry section
+    with st.expander("🗑️ Delete an entry"):
+        delete_options = []
+        for i, (ts, plate) in enumerate(zip(timestamps_for_delete, plates_for_delete)):
+            delete_options.append(f"{ts} | {plate}")
+        
+        selected_delete = st.selectbox(
+            "Select entry to delete:",
+            ["-- Select --"] + delete_options,
+            key="delete_entry_select"
+        )
+        
+        if selected_delete != "-- Select --":
+            idx = delete_options.index(selected_delete)
+            del_ts = timestamps_for_delete[idx]
+            del_plate = plates_for_delete[idx]
+            
+            col_del, col_warn = st.columns([1, 2])
+            with col_del:
+                if st.button("🗑️ Delete Entry", type="primary", key="confirm_delete"):
+                    with st.spinner("Deleting entry..."):
+                        success = st.session_state.sheets_manager.delete_entry(del_ts, del_plate)
+                        if success:
+                            st.success(f"✅ Deleted entry for {del_plate} at {del_ts}")
+                            load_data()
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to delete entry. It may have already been removed.")
+            with col_warn:
+                st.caption("⚠️ This will permanently remove the entry from Google Sheets.")
+    
     st.markdown("---")
 
 
@@ -403,14 +455,15 @@ def add_vehicle_entry_form():
                 if success:
                     st.success(f"✅ Entry added successfully for {normalized_plate}")
                     
-                    # Clear prefill
-                    st.session_state.pop('prefill_plate', None)
-                    st.session_state.pop('prefill_tag', None)
-                    st.session_state.pop('prefill_make', None)
-                    st.session_state.pop('prefill_model', None)
-                    st.session_state.pop('prefill_color', None)
-                    st.session_state.pop('analysis_photo_bytes', None)
-                    st.session_state.pop('analysis_photo_name', None)
+                    # Clear all prefill and analysis state
+                    for key in ['prefill_plate', 'prefill_tag', 'prefill_make',
+                                'prefill_model', 'prefill_color',
+                                'analysis_photo_bytes', 'analysis_photo_name']:
+                        st.session_state.pop(key, None)
+                    
+                    # Reset the Quick Select dropdown and photo uploader
+                    st.session_state.pop('quick_select_vehicle', None)
+                    st.session_state.pop('analysis_photo_uploader', None)
                     
                     # Reload data
                     load_data()
@@ -513,6 +566,43 @@ def show_scoreboard():
                 if st.button(f"🔍 History", key=f"history_{plate}"):
                     st.session_state.search_plate_prefill = plate
                     st.rerun()
+    
+    # --- Top 10 Most Used Tags (Last 90 Days) ---
+    st.markdown("---")
+    st.markdown("### 🏷️ Top 10 Most Used Tags (Last 90 Days)")
+    
+    # Get 90-day data for tag analysis
+    try:
+        tab_names_90 = st.session_state.sheets_manager.get_all_tabs_in_range(90)
+        data_90 = st.session_state.sheets_manager.read_data_from_tabs(tab_names_90)
+        
+        if not data_90.empty:
+            # Filter to last 90 days
+            cutoff_90 = datetime.now() - pd.Timedelta(days=90)
+            data_90 = data_90[data_90['Timestamp'] >= cutoff_90]
+            
+            # Count tag usage (exclude empty/NaN tags)
+            tag_counts = data_90[data_90['Tag Number'].astype(str).str.strip() != '']
+            tag_counts = tag_counts.groupby('Tag Number').agg(
+                Times_Used=('Timestamp', 'count'),
+                Unique_Days=('Timestamp', lambda x: x.dt.date.nunique()),
+                Last_Seen=('Timestamp', 'max'),
+                Plates_Used=('License Plate', lambda x: ', '.join(x.unique()[:3]) + ('...' if x.nunique() > 3 else ''))
+            ).reset_index()
+            tag_counts = tag_counts.sort_values('Times_Used', ascending=False).head(10)
+            tag_counts.columns = ['Tag Number', 'Times Used', 'Unique Days', 'Last Seen', 'Plates']
+            tag_counts['Last Seen'] = tag_counts['Last Seen'].dt.strftime('%Y-%m-%d')
+            tag_counts = tag_counts.reset_index(drop=True)
+            
+            st.dataframe(
+                tag_counts,
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("No data available for the last 90 days.")
+    except Exception as e:
+        st.warning(f"Could not load tag data: {str(e)}")
 
 
 def show_quick_add_modal():
