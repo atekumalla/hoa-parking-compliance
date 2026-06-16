@@ -24,7 +24,7 @@ load_dotenv()
 
 # Configuration
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
-GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID', '')  # Now optional
 GOOGLE_CREDENTIALS_PATH = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 SCOREBOARD_TOP_N = int(os.getenv('SCOREBOARD_TOP_N', '20'))
 
@@ -33,13 +33,15 @@ def initialize_app():
     """Initialize application with required managers and data."""
     
     # Validate environment variables
-    if not all([GOOGLE_SHEET_ID, GOOGLE_DRIVE_FOLDER_ID, GOOGLE_CREDENTIALS_PATH]):
+    if not all([GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_PATH]):
         st.error("❌ Missing required environment variables. Please check your .env file.")
         st.info("""
         Required variables:
         - GOOGLE_SHEET_ID
-        - GOOGLE_DRIVE_FOLDER_ID
         - GOOGLE_APPLICATION_CREDENTIALS
+        
+        Optional:
+        - GOOGLE_DRIVE_FOLDER_ID (auto-created if not provided)
         
         See README.md for setup instructions.
         """)
@@ -61,8 +63,8 @@ def initialize_app():
         
         if 'drive_manager' not in st.session_state:
             st.session_state.drive_manager = DriveManager(
-                GOOGLE_DRIVE_FOLDER_ID,
-                GOOGLE_CREDENTIALS_PATH
+                GOOGLE_CREDENTIALS_PATH,
+                legacy_folder_id=GOOGLE_DRIVE_FOLDER_ID if GOOGLE_DRIVE_FOLDER_ID else None
             )
         
         if 'compliance_engine' not in st.session_state:
@@ -863,6 +865,184 @@ def show_vehicle_history():
                 st.markdown("---")
 
 
+def show_storage_management():
+    """Display storage usage and photo cleanup tools."""
+    st.header("💾 Storage Management")
+    
+    drive_mgr = st.session_state.drive_manager
+    
+    # --- Storage Quota ---
+    st.subheader("📊 Storage Usage")
+    
+    quota = drive_mgr.get_storage_quota()
+    
+    if quota.get('error'):
+        st.warning(f"⚠️ Could not fetch quota: {quota['error']}")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Used", quota['used_human'])
+    with col2:
+        st.metric("Total", quota['total_human'])
+    with col3:
+        st.metric("Usage", f"{quota['used_percent']}%")
+    
+    # Progress bar for storage
+    usage_fraction = min(quota['used_percent'] / 100.0, 1.0)
+    st.progress(usage_fraction)
+    
+    if quota['used_percent'] > 95:
+        st.error("🚨 Storage is nearly full! Delete photos immediately to continue uploading.")
+    elif quota['used_percent'] > 80:
+        st.warning("⚠️ Storage is above 80%. Consider cleaning up old photos.")
+    
+    st.markdown("---")
+    
+    # --- Folder Link ---
+    st.subheader("📂 Photo Folder")
+    drive_url = drive_mgr.get_folder_url()
+    st.markdown(f"[Open Photos Folder in Google Drive]({drive_url})")
+    st.caption("This folder is publicly accessible — anyone with the link can view photos.")
+    
+    st.markdown("---")
+    
+    # --- Delete by Month ---
+    st.subheader("🗑️ Delete Photos by Month")
+    st.caption("Select a month to delete all photos from that month's folder. "
+               "Download/copy photos first before deleting!")
+    
+    monthly_folders = drive_mgr.list_monthly_folders()
+    
+    if not monthly_folders:
+        st.info("No monthly folders found. Photos will appear here once uploaded.")
+    else:
+        # Build folder info with file counts
+        folder_info = []
+        for folder in monthly_folders:
+            files = drive_mgr.list_files_in_folder(folder['id'])
+            total_size = sum(int(f.get('size', 0)) for f in files)
+            folder_info.append({
+                'name': folder['name'],
+                'id': folder['id'],
+                'file_count': len(files),
+                'total_size': DriveManager._bytes_to_human(total_size)
+            })
+        
+        # Display as a table
+        folder_df = pd.DataFrame(folder_info)
+        folder_df.columns = ['Month', 'Folder ID', 'Photos', 'Size']
+        st.dataframe(
+            folder_df[['Month', 'Photos', 'Size']],
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Delete by month selector
+        month_options = [f"{fi['name']} ({fi['file_count']} photos, {fi['total_size']})"
+                         for fi in folder_info if fi['file_count'] > 0]
+        
+        if month_options:
+            selected_month = st.selectbox(
+                "Select month to delete:",
+                ["-- Select a month --"] + month_options,
+                key="delete_month_select"
+            )
+            
+            if selected_month != "-- Select a month --":
+                idx = month_options.index(selected_month)
+                # Find the matching folder_info entry (only those with files)
+                folders_with_files = [fi for fi in folder_info if fi['file_count'] > 0]
+                target_folder = folders_with_files[idx]
+                
+                st.warning(
+                    f"⚠️ This will permanently delete **{target_folder['file_count']} photos** "
+                    f"({target_folder['total_size']}) from **{target_folder['name']}**. "
+                    f"This cannot be undone!"
+                )
+                
+                confirm_text = st.text_input(
+                    f"Type **{target_folder['name']}** to confirm deletion:",
+                    key="confirm_month_delete"
+                )
+                
+                if st.button("🗑️ Delete All Photos in Month", type="primary", key="btn_delete_month"):
+                    if confirm_text.strip() == target_folder['name']:
+                        with st.spinner(f"Deleting {target_folder['file_count']} photos..."):
+                            success, failed = drive_mgr.delete_monthly_folder_contents(
+                                target_folder['id']
+                            )
+                            if failed == 0:
+                                st.success(f"✅ Deleted {success} photos from {target_folder['name']}")
+                                st.rerun()
+                            else:
+                                st.warning(f"Deleted {success} photos, {failed} failed.")
+                                st.rerun()
+                    else:
+                        st.error("❌ Confirmation text doesn't match. Please type the month exactly.")
+        else:
+            st.info("No months with photos to delete.")
+    
+    st.markdown("---")
+    
+    # --- Delete by Date Range ---
+    st.subheader("📅 Delete Photos by Date Range")
+    st.caption("Delete all photos uploaded within a specific date range.")
+    
+    col_start, col_end = st.columns(2)
+    with col_start:
+        start_date = st.date_input("Start date", key="delete_start_date")
+    with col_end:
+        end_date = st.date_input("End date", key="delete_end_date")
+    
+    if start_date > end_date:
+        st.error("Start date must be before end date.")
+    else:
+        if st.button("🔍 Find Photos in Range", key="btn_find_range"):
+            with st.spinner("Searching for photos..."):
+                start_dt = datetime.combine(start_date, datetime.min.time())
+                end_dt = datetime.combine(end_date, datetime.max.time())
+                files = drive_mgr.list_files_in_date_range(start_dt, end_dt)
+                
+                if files:
+                    st.session_state['range_delete_files'] = files
+                    total_size = sum(int(f.get('size', 0)) for f in files)
+                    st.info(
+                        f"Found **{len(files)} photos** "
+                        f"({DriveManager._bytes_to_human(total_size)}) "
+                        f"between {start_date} and {end_date}"
+                    )
+                else:
+                    st.session_state.pop('range_delete_files', None)
+                    st.info("No photos found in this date range.")
+        
+        # Show delete button if files were found
+        if st.session_state.get('range_delete_files'):
+            files_to_delete = st.session_state['range_delete_files']
+            
+            st.warning(
+                f"⚠️ This will permanently delete **{len(files_to_delete)} photos**. "
+                f"This cannot be undone!"
+            )
+            
+            confirm_range = st.checkbox(
+                "I confirm I want to delete these photos permanently",
+                key="confirm_range_delete"
+            )
+            
+            if confirm_range:
+                if st.button("🗑️ Delete Photos in Range", type="primary", key="btn_delete_range"):
+                    with st.spinner(f"Deleting {len(files_to_delete)} photos..."):
+                        file_ids = [f['id'] for f in files_to_delete]
+                        success, failed = drive_mgr.delete_files(file_ids)
+                        st.session_state.pop('range_delete_files', None)
+                        if failed == 0:
+                            st.success(f"✅ Deleted {success} photos successfully!")
+                            st.rerun()
+                        else:
+                            st.warning(f"Deleted {success} photos, {failed} failed.")
+                            st.rerun()
+
+
 def show_rules():
     """Display parking enforcement rules."""
     st.header("📜 Parking Enforcement Rules")
@@ -941,12 +1121,12 @@ def main():
     st.title("🚗 Station 121 HOA Guest Parking Compliance Tracker")
     st.markdown("Track and enforce guest parking rules with ease")
     
-    # Quick links
+    # Quick links — use the service account's auto-created folder URL
     sheet_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/edit"
-    drive_url = f"https://drive.google.com/drive/folders/{GOOGLE_DRIVE_FOLDER_ID}"
+    drive_url = st.session_state.drive_manager.get_folder_url()
     st.markdown(
         f"📎 [Open Google Sheet]({sheet_url}) &nbsp;|&nbsp; "
-        f"📂 [Open Google Drive]({drive_url})"
+        f"📂 [Open Google Drive Photos]({drive_url})"
     )
     
     # Handle quick add modal
@@ -963,7 +1143,9 @@ def main():
         return
     
     # Create tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Add Vehicle", "📊 Scoreboard", "🔍 Vehicle History", "📜 Rules"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📝 Add Vehicle", "📊 Scoreboard", "🔍 Vehicle History", "� Storage", "�📜 Rules"
+    ])
     
     with tab1:
         add_vehicle_entry_form()
@@ -975,6 +1157,9 @@ def main():
         show_vehicle_history()
     
     with tab4:
+        show_storage_management()
+    
+    with tab5:
         show_rules()
     
     # Footer
