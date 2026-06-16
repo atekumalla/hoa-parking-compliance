@@ -240,6 +240,17 @@ def add_vehicle_entry_form():
                             # Store results in session state to populate form fields
                             if result.license_plate:
                                 st.session_state['prefill_plate'] = result.license_plate
+                                
+                                # Lookup tag number from existing records
+                                historical = st.session_state.get('historical_data', pd.DataFrame())
+                                if not historical.empty:
+                                    normalized = st.session_state.compliance_engine.normalize_license_plate(result.license_plate)
+                                    match = historical[historical['License Plate'] == normalized].sort_values('Timestamp', ascending=False)
+                                    if not match.empty:
+                                        tag = match.iloc[0].get('Tag Number', '')
+                                        if tag and str(tag).strip():
+                                            st.session_state['prefill_tag'] = str(tag).strip()
+                                
                             if result.make:
                                 st.session_state['prefill_make'] = result.make
                             if result.model:
@@ -264,6 +275,8 @@ def add_vehicle_entry_form():
             detected_parts = []
             if st.session_state.get('prefill_plate'):
                 detected_parts.append(f"**Plate:** {st.session_state['prefill_plate']}")
+            if st.session_state.get('prefill_tag'):
+                detected_parts.append(f"**Tag:** {st.session_state['prefill_tag']} (from records)")
             if st.session_state.get('prefill_make'):
                 detected_parts.append(f"**Make:** {st.session_state['prefill_make']}")
             if st.session_state.get('prefill_model'):
