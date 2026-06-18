@@ -1,0 +1,7 @@
+[server]
+# Keep sessions alive longer when browser tab is backgrounded (mobile photo picker)
+enableWebsocketCompression = false
+maxUploadSize = 10
+
+[browser]
+gatherUsageStats = false

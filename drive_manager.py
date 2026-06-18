@@ -13,6 +13,14 @@ from io import BytesIO
 from typing import Tuple, Optional, List, Dict
 
 from PIL import Image
+
+# Register HEIC support with Pillow (iOS default photo format)
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build

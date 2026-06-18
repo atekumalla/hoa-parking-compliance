@@ -13,6 +13,13 @@ import streamlit as st
 import pandas as pd
 from PIL import Image, ImageOps
 
+# Register HEIC support with Pillow (iOS default photo format)
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass  # HEIC support optional — JPG/PNG still work
+
 from sheets_manager import SheetsManager
 from drive_manager import DriveManager
 from compliance_engine import ComplianceEngine
@@ -285,7 +292,7 @@ def add_vehicle_entry_form():
         
         analysis_photo = st.file_uploader(
             "Upload a vehicle photo for AI analysis",
-            type=['jpg', 'jpeg', 'png', 'webp'],
+            type=['jpg', 'jpeg', 'png', 'webp', 'heic', 'bmp', 'gif'],
             key="analysis_photo_uploader",
             label_visibility="collapsed"
         )
