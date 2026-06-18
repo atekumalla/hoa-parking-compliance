@@ -1,9 +1,10 @@
 """
 Google Drive Manager for HOA Parking Compliance Tracker.
 
-Manages photo uploads to a Google Drive folder shared with the service account.
-The folder must be created by a user and shared (Editor) with the service account email.
-Includes storage management features for listing and deleting photos.
+Manages photo uploads to a Google Drive folder using per-user OAuth credentials.
+Read operations (list, delete, storage usage) use the service account.
+Upload operations require user OAuth credentials (each user's uploads count
+against their own Google Drive storage quota).
 """
 
 import os
@@ -12,14 +13,15 @@ from io import BytesIO
 from typing import Tuple, Optional, List, Dict
 
 from PIL import Image
-from google.oauth2.service_account import Credentials
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from googleapiclient.errors import HttpError
 
 
 class DriveManager:
-    """Manages Google Drive photo uploads to a user-shared folder."""
+    """Manages Google Drive photo uploads with per-user OAuth."""
 
     MAX_FILE_SIZE_MB = 10
     MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
@@ -34,27 +36,32 @@ class DriveManager:
         """
         self.folder_id = folder_id
         self.credentials_path = credentials_path
-        self._service = None
+        self._service = None  # Service account service (for read/list/delete)
         self._monthly_folder_cache = {}
 
     @property
     def service(self):
-        """Lazy-initialize the Drive service."""
+        """Lazy-initialize the Drive service (service account — for read ops)."""
         if self._service is None:
             scopes = ['https://www.googleapis.com/auth/drive']
-            creds = Credentials.from_service_account_file(
+            creds = ServiceAccountCredentials.from_service_account_file(
                 self.credentials_path,
                 scopes=scopes
             )
             self._service = build('drive', 'v3', credentials=creds)
         return self._service
 
-    def _get_or_create_monthly_folder(self, year_month: str) -> str:
+    def _get_oauth_service(self, oauth_credentials: OAuthCredentials):
+        """Build a Drive service using user OAuth credentials (for uploads)."""
+        return build('drive', 'v3', credentials=oauth_credentials)
+
+    def _get_or_create_monthly_folder(self, year_month: str, drive_service=None) -> str:
         """
         Get or create a monthly subfolder (e.g., '2026-06').
 
         Args:
             year_month: Folder name in 'YYYY-MM' format.
+            drive_service: Optional Drive service to use (OAuth). Falls back to service account.
 
         Returns:
             Folder ID of the monthly subfolder.
@@ -62,13 +69,15 @@ class DriveManager:
         if year_month in self._monthly_folder_cache:
             return self._monthly_folder_cache[year_month]
 
+        svc = drive_service or self.service
+
         query = (
             f"name = '{year_month}' and "
             f"mimeType = 'application/vnd.google-apps.folder' and "
             f"'{self.folder_id}' in parents and "
             f"trashed = false"
         )
-        results = self.service.files().list(
+        results = svc.files().list(
             q=query,
             spaces='drive',
             fields='files(id, name)',
@@ -87,7 +96,7 @@ class DriveManager:
                 'mimeType': 'application/vnd.google-apps.folder',
                 'parents': [self.folder_id]
             }
-            folder = self.service.files().create(
+            folder = svc.files().create(
                 body=folder_metadata,
                 fields='id',
                 supportsAllDrives=True
@@ -121,14 +130,32 @@ class DriveManager:
         file_bytes: bytes,
         license_plate: str,
         tag_number: str,
-        original_filename: Optional[str] = None
+        original_filename: Optional[str] = None,
+        oauth_credentials: Optional[OAuthCredentials] = None
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Upload a photo to the appropriate monthly folder.
 
+        Uses OAuth credentials if provided (per-user upload).
+        Falls back to service account if no OAuth credentials (will likely fail
+        due to storage quota on free GCP projects).
+
+        Args:
+            file_bytes: Raw image bytes.
+            license_plate: License plate for filename.
+            tag_number: Tag number for filename.
+            original_filename: Original filename (unused, kept for API compat).
+            oauth_credentials: User's OAuth credentials for upload.
+
         Returns:
             Tuple of (success, photo_url, error_message)
         """
+        if oauth_credentials is None:
+            return False, None, (
+                "Google sign-in required for photo uploads. "
+                "Please sign in with your Google account above."
+            )
+
         try:
             if len(file_bytes) > self.MAX_FILE_SIZE_BYTES:
                 size_mb = len(file_bytes) / (1024 * 1024)
@@ -139,9 +166,12 @@ class DriveManager:
             except Exception as e:
                 return False, None, f"Failed to process image: {str(e)}"
 
+            # Use OAuth service for the upload
+            oauth_service = self._get_oauth_service(oauth_credentials)
+
             now = datetime.now()
             year_month = now.strftime('%Y-%m')
-            monthly_folder_id = self._get_or_create_monthly_folder(year_month)
+            monthly_folder_id = self._get_or_create_monthly_folder(year_month, oauth_service)
 
             timestamp_str = now.strftime('%Y%m%d_%H%M%S')
             safe_plate = license_plate.replace(' ', '').replace('/', '_')
@@ -159,7 +189,7 @@ class DriveManager:
                 resumable=True
             )
 
-            uploaded_file = self.service.files().create(
+            uploaded_file = oauth_service.files().create(
                 body=file_metadata,
                 media_body=media,
                 fields='id, webViewLink',
@@ -169,7 +199,7 @@ class DriveManager:
             # Make publicly viewable
             try:
                 permission = {'type': 'anyone', 'role': 'reader'}
-                self.service.permissions().create(
+                oauth_service.permissions().create(
                     fileId=uploaded_file['id'],
                     body=permission,
                     fields='id',

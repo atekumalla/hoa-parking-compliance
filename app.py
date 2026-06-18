@@ -17,6 +17,10 @@ from sheets_manager import SheetsManager
 from drive_manager import DriveManager
 from compliance_engine import ComplianceEngine
 from vehicle_recognition import analyze_vehicle_photo, is_recognition_available
+from oauth_manager import (
+    is_oauth_configured, is_user_authenticated, get_user_credentials,
+    handle_oauth_callback, show_auth_ui
+)
 
 
 # Load environment variables
@@ -237,10 +241,12 @@ def add_vehicle_entry_form():
     if known_vehicles:
         st.subheader("⚡ Quick Select Known Vehicle")
         vehicle_options = ["-- Select a known vehicle to auto-fill --"] + [v['label'] for v in known_vehicles]
+        # Use a dynamic key that resets after each submission
+        qs_key = f"quick_select_vehicle_{st.session_state.get('qs_reset_counter', 0)}"
         selected = st.selectbox(
             "Pick from previously seen vehicles:",
             vehicle_options,
-            key="quick_select_vehicle"
+            key=qs_key
         )
         
         if selected != vehicle_options[0]:
@@ -423,11 +429,13 @@ def add_vehicle_entry_form():
             
             if upload_bytes is not None:
                 with st.spinner("Uploading photo to Google Drive..."):
+                    oauth_creds = get_user_credentials()
                     success, url, error = st.session_state.drive_manager.upload_photo(
                         upload_bytes,
                         normalized_plate,
                         tag_number,
-                        upload_name
+                        upload_name,
+                        oauth_credentials=oauth_creds
                     )
                     
                     if success:
@@ -461,8 +469,8 @@ def add_vehicle_entry_form():
                                 'analysis_photo_bytes', 'analysis_photo_name']:
                         st.session_state.pop(key, None)
                     
-                    # Reset the Quick Select dropdown and photo uploader
-                    st.session_state.pop('quick_select_vehicle', None)
+                    # Reset the Quick Select dropdown by incrementing counter (new key = fresh widget)
+                    st.session_state['qs_reset_counter'] = st.session_state.get('qs_reset_counter', 0) + 1
                     st.session_state.pop('analysis_photo_uploader', None)
                     
                     # Reload data
@@ -666,11 +674,13 @@ def show_quick_add_modal():
             if photo_file is not None:
                 with st.spinner("Uploading photo..."):
                     file_bytes = photo_file.read()
+                    oauth_creds = get_user_credentials()
                     success, url, error = st.session_state.drive_manager.upload_photo(
                         file_bytes,
                         vehicle['license_plate'],
                         vehicle['tag_number'],
-                        photo_file.name
+                        photo_file.name,
+                        oauth_credentials=oauth_creds
                     )
                     
                     if success:
@@ -1097,6 +1107,9 @@ def main():
         initial_sidebar_state="collapsed"
     )
     
+    # Handle OAuth callback (must be early, before any other rendering)
+    handle_oauth_callback()
+    
     # Initialize app
     initialize_app()
     
@@ -1116,6 +1129,10 @@ def main():
         f"📂 [Open Google Drive Photos]({drive_url})"
     )
     
+    # Google OAuth sign-in for photo uploads
+    if is_oauth_configured():
+        show_auth_ui()
+    
     # Handle quick add modal
     if st.session_state.get('show_quick_add', False):
         show_quick_add_modal()
@@ -1131,7 +1148,7 @@ def main():
     
     # Create tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📝 Add Vehicle", "📊 Scoreboard", "🔍 Vehicle History", "� Storage", "�📜 Rules"
+        "📝 Add Vehicle", "📊 Scoreboard", "🔍 Vehicle History", "💾 Storage", "📜 Rules"
     ])
     
     with tab1:
