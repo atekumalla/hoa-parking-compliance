@@ -183,6 +183,7 @@ def _show_todays_entries():
     # Store original timestamps for deletion (before converting to string)
     timestamps_for_delete = df_today.sort_values('Timestamp', ascending=False)['Timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S').tolist()
     plates_for_delete = df_today.sort_values('Timestamp', ascending=False)['License Plate'].tolist()
+    photo_urls_for_delete = df_today.sort_values('Timestamp', ascending=False)['Photo URL'].fillna('').tolist()
     
     # Ensure all columns are strings to avoid Arrow serialization issues with mixed types
     display_df = display_df.astype(str)
@@ -210,6 +211,7 @@ def _show_todays_entries():
             idx = delete_options.index(selected_delete)
             del_ts = timestamps_for_delete[idx]
             del_plate = plates_for_delete[idx]
+            del_photo_url = photo_urls_for_delete[idx]
             
             col_del, col_warn = st.columns([1, 2])
             with col_del:
@@ -217,13 +219,22 @@ def _show_todays_entries():
                     with st.spinner("Deleting entry..."):
                         success = st.session_state.sheets_manager.delete_entry(del_ts, del_plate)
                         if success:
+                            # Also delete the associated photo from Drive
+                            if del_photo_url and str(del_photo_url).startswith('http'):
+                                file_id = DriveManager.extract_file_id_from_url(del_photo_url)
+                                if file_id:
+                                    try:
+                                        st.session_state.drive_manager.delete_files([file_id])
+                                    except Exception:
+                                        pass  # Best effort — entry is already deleted
+                            
                             st.success(f"✅ Deleted entry for {del_plate} at {del_ts}")
                             load_data()
                             st.rerun()
                         else:
                             st.error("❌ Failed to delete entry. It may have already been removed.")
             with col_warn:
-                st.caption("⚠️ This will permanently remove the entry from Google Sheets.")
+                st.caption("⚠️ This will permanently remove the entry and its photo.")
     
     st.markdown("---")
 
