@@ -493,7 +493,7 @@ def add_vehicle_entry_form():
 
 def show_scoreboard():
     """Render the scoreboard showing most frequent vehicles."""
-    st.header("📊 Scoreboard - Most Frequent Vehicles")
+    st.header("📊 Scoreboard")
     
     col1, col2 = st.columns([3, 1])
     
@@ -510,97 +510,17 @@ def show_scoreboard():
         st.info("No parking records found in the last 30 days.")
         return
     
-    # Generate scoreboard
-    scoreboard = st.session_state.compliance_engine.get_scoreboard_data(
-        st.session_state.rolling_data,
-        SCOREBOARD_TOP_N
-    )
-    
-    if scoreboard.empty:
-        st.info("No vehicles to display.")
-        return
-    
-    # Display scoreboard
-    st.markdown(f"### Top {len(scoreboard)} Vehicles (Last 30 Days)")
-    
-    # Create display dataframe with color coding
-    for idx, row in scoreboard.iterrows():
-        plate = row['License Plate']
-        unique_days = row['Unique Days Parked']
-        last_seen = row['Last Seen']
-        tag = row['Tag Number']
-        make = str(row['Make']).strip() if pd.notna(row['Make']) else ""
-        model = str(row['Model']).strip() if pd.notna(row['Model']) else ""
-        make_model = f"{make} {model}".strip()
-        warned = row['Warned']
-        last_warned = row['Last Warned Date']
-        towed = row['Towed']
-        towed_date = row['Towed Date']
-        
-        # Determine color based on status
-        if towed:
-            card_color = "#5c1a1a"  # Dark red for towed
-            text_color = "#f8d7da"
-            status_emoji = "🚨"
-            status_text = "TOWED"
-        elif warned:
-            card_color = "#5c4a1a"  # Dark amber for warned
-            text_color = "#fff3cd"
-            status_emoji = "⚠️"
-            status_text = "WARNED"
-        else:
-            card_color = "#2a2a2a"  # Dark gray for normal
-            text_color = "#e0e0e0"
-            status_emoji = "✓"
-            status_text = "Active"
-        
-        # Create card
-        with st.container():
-            make_model_line = f"<p style='margin: 5px 0;'><strong>{make_model}</strong> | Tag: {tag}</p>" if make_model else f"<p style='margin: 5px 0;'>Tag: {tag}</p>"
-            warned_info = f" | Last Warned: {last_warned}" if warned and last_warned else ""
-            towed_info = f" | Towed On: {towed_date}" if towed and towed_date else ""
-            st.markdown(
-                f"""<div style="background-color: {card_color}; color: {text_color}; padding: 15px; border-radius: 5px; margin-bottom: 10px;">
-                    <h4 style="margin: 0; color: {text_color};">{status_emoji} {plate}</h4>
-                    {make_model_line}
-                    <p style="margin: 5px 0;">Unique Days Parked: <strong>{unique_days}</strong> | Last Seen: {last_seen.strftime('%Y-%m-%d %H:%M') if pd.notna(last_seen) else 'N/A'}</p>
-                    <p style="margin: 5px 0;">Status: <strong>{status_text}</strong>{warned_info}{towed_info}</p>
-                </div>""",
-                unsafe_allow_html=True
-            )
-            
-            # Quick add and View History buttons
-            btn_col1, btn_col2, _ = st.columns([1, 1, 3])
-            with btn_col1:
-                if st.button(f"➕ Quick Add", key=f"quick_add_{plate}"):
-                    st.session_state.quick_add_vehicle = {
-                        'license_plate': plate,
-                        'tag_number': tag,
-                        'make': row['Make'],
-                        'model': row['Model']
-                    }
-                    st.session_state.show_quick_add = True
-                    st.rerun()
-            with btn_col2:
-                if st.button(f"🔍 History", key=f"history_{plate}"):
-                    st.session_state.search_plate_prefill = plate
-                    st.rerun()
-    
-    # --- Top 10 Most Used Tags (Last 90 Days) ---
-    st.markdown("---")
+    # --- Top 10 Most Used Tags (Last 90 Days) — shown first ---
     st.markdown("### 🏷️ Top 10 Most Used Tags (Last 90 Days)")
     
-    # Get 90-day data for tag analysis
     try:
         tab_names_90 = st.session_state.sheets_manager.get_all_tabs_in_range(90)
         data_90 = st.session_state.sheets_manager.read_data_from_tabs(tab_names_90)
         
         if not data_90.empty:
-            # Filter to last 90 days
             cutoff_90 = datetime.now() - pd.Timedelta(days=90)
             data_90 = data_90[data_90['Timestamp'] >= cutoff_90]
             
-            # Count tag usage (exclude empty/NaN tags)
             tag_counts = data_90[data_90['Tag Number'].astype(str).str.strip() != '']
             tag_counts = tag_counts.groupby('Tag Number').agg(
                 Times_Used=('Timestamp', 'count'),
@@ -622,6 +542,120 @@ def show_scoreboard():
             st.info("No data available for the last 90 days.")
     except Exception as e:
         st.warning(f"Could not load tag data: {str(e)}")
+    
+    st.markdown("---")
+    
+    # --- Vehicle Scoreboard with pagination ---
+    PAGE_SIZE = 10
+    
+    # Generate full scoreboard (get enough data for pagination)
+    scoreboard = st.session_state.compliance_engine.get_scoreboard_data(
+        st.session_state.rolling_data,
+        100  # Get all vehicles, we'll paginate in the UI
+    )
+    
+    if scoreboard.empty:
+        st.info("No vehicles to display.")
+        return
+    
+    total_vehicles = len(scoreboard)
+    current_page = st.session_state.get('scoreboard_page', 0)
+    total_pages = (total_vehicles + PAGE_SIZE - 1) // PAGE_SIZE  # ceil division
+    
+    # Clamp page
+    if current_page >= total_pages:
+        current_page = total_pages - 1
+    if current_page < 0:
+        current_page = 0
+    
+    start_idx = current_page * PAGE_SIZE
+    end_idx = min(start_idx + PAGE_SIZE, total_vehicles)
+    page_data = scoreboard.iloc[start_idx:end_idx]
+    
+    st.markdown(f"### 🚗 Most Frequent Vehicles (Last 30 Days)")
+    st.caption(f"Showing {start_idx + 1}–{end_idx} of {total_vehicles} vehicles")
+    
+    # Display vehicle cards for current page
+    for idx, row in page_data.iterrows():
+        plate = row['License Plate']
+        unique_days = row['Unique Days Parked']
+        last_seen = row['Last Seen']
+        tag = row['Tag Number']
+        make = str(row['Make']).strip() if pd.notna(row['Make']) else ""
+        model = str(row['Model']).strip() if pd.notna(row['Model']) else ""
+        make_model = f"{make} {model}".strip()
+        warned = row['Warned']
+        last_warned = row['Last Warned Date']
+        towed = row['Towed']
+        towed_date = row['Towed Date']
+        
+        if towed:
+            card_color = "#5c1a1a"
+            text_color = "#f8d7da"
+            status_emoji = "🚨"
+            status_text = "TOWED"
+        elif warned:
+            card_color = "#5c4a1a"
+            text_color = "#fff3cd"
+            status_emoji = "⚠️"
+            status_text = "WARNED"
+        else:
+            card_color = "#2a2a2a"
+            text_color = "#e0e0e0"
+            status_emoji = "✓"
+            status_text = "Active"
+        
+        with st.container():
+            make_model_line = f"<p style='margin: 5px 0;'><strong>{make_model}</strong> | Tag: {tag}</p>" if make_model else f"<p style='margin: 5px 0;'>Tag: {tag}</p>"
+            warned_info = f" | Last Warned: {last_warned}" if warned and last_warned else ""
+            towed_info = f" | Towed On: {towed_date}" if towed and towed_date else ""
+            st.markdown(
+                f"""<div style="background-color: {card_color}; color: {text_color}; padding: 15px; border-radius: 5px; margin-bottom: 10px;">
+                    <h4 style="margin: 0; color: {text_color};">{status_emoji} {plate}</h4>
+                    {make_model_line}
+                    <p style="margin: 5px 0;">Unique Days Parked: <strong>{unique_days}</strong> | Last Seen: {last_seen.strftime('%Y-%m-%d %H:%M') if pd.notna(last_seen) else 'N/A'}</p>
+                    <p style="margin: 5px 0;">Status: <strong>{status_text}</strong>{warned_info}{towed_info}</p>
+                </div>""",
+                unsafe_allow_html=True
+            )
+            
+            btn_col1, btn_col2, _ = st.columns([1, 1, 3])
+            with btn_col1:
+                if st.button(f"➕ Quick Add", key=f"quick_add_{plate}"):
+                    st.session_state.quick_add_vehicle = {
+                        'license_plate': plate,
+                        'tag_number': tag,
+                        'make': row['Make'],
+                        'model': row['Model']
+                    }
+                    st.session_state.show_quick_add = True
+                    st.rerun()
+            with btn_col2:
+                if st.button(f"🔍 History", key=f"history_{plate}"):
+                    st.session_state.search_plate_prefill = plate
+                    st.rerun()
+    
+    # Pagination controls
+    st.markdown("---")
+    col_prev, col_info, col_next = st.columns([1, 2, 1])
+    
+    with col_prev:
+        if current_page > 0:
+            if st.button("← Previous 10", use_container_width=True, key="sb_prev"):
+                st.session_state['scoreboard_page'] = current_page - 1
+                st.rerun()
+    
+    with col_info:
+        st.markdown(
+            f"<div style='text-align: center; padding-top: 8px;'>Page {current_page + 1} of {total_pages}</div>",
+            unsafe_allow_html=True
+        )
+    
+    with col_next:
+        if end_idx < total_vehicles:
+            if st.button("Next 10 →", use_container_width=True, key="sb_next"):
+                st.session_state['scoreboard_page'] = current_page + 1
+                st.rerun()
 
 
 def show_quick_add_modal():
