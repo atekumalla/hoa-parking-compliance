@@ -4,9 +4,13 @@ Google OAuth Manager for HOA Parking Compliance Tracker.
 Handles per-user Google OAuth2 authentication flow within Streamlit.
 Each user signs in with their own Google account to enable photo uploads
 to Google Drive (uploads count against the authenticating user's quota).
+
+Tokens are persisted to disk so users don't need to re-login on every
+page refresh. The token file survives server restarts (lost on redeploy).
 """
 
 import os
+import json
 import urllib.parse
 from typing import Optional
 
@@ -21,6 +25,9 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 # Google OAuth endpoints
 AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/auth'
 TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
+
+# File to persist OAuth tokens across page refreshes
+TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.oauth_tokens.json')
 
 
 def get_oauth_config() -> Optional[dict]:
@@ -57,6 +64,70 @@ def get_redirect_uri() -> str:
     if redirect_uri:
         return redirect_uri
     return 'http://localhost:8501'
+
+
+def _save_token_to_disk(creds: Credentials):
+    """Save OAuth credentials to disk for persistence across page refreshes."""
+    try:
+        token_data = {
+            'token': creds.token,
+            'refresh_token': creds.refresh_token,
+            'token_uri': creds.token_uri,
+            'client_id': creds.client_id,
+            'client_secret': creds.client_secret,
+            'scopes': list(creds.scopes) if creds.scopes else list(SCOPES),
+        }
+        with open(TOKEN_FILE, 'w') as f:
+            json.dump(token_data, f)
+    except Exception:
+        pass  # Best effort — if we can't save, user just re-auths next refresh
+
+
+def _load_token_from_disk() -> Optional[Credentials]:
+    """Load OAuth credentials from disk if available."""
+    try:
+        if not os.path.exists(TOKEN_FILE):
+            return None
+
+        with open(TOKEN_FILE, 'r') as f:
+            token_data = json.load(f)
+
+        if not token_data.get('refresh_token'):
+            return None
+
+        creds = Credentials(
+            token=token_data.get('token'),
+            refresh_token=token_data['refresh_token'],
+            token_uri=token_data.get('token_uri', TOKEN_ENDPOINT),
+            client_id=token_data.get('client_id'),
+            client_secret=token_data.get('client_secret'),
+            scopes=token_data.get('scopes', SCOPES),
+        )
+
+        # Try to refresh if expired
+        if creds.expired or not creds.token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            _save_token_to_disk(creds)  # Save updated access token
+
+        return creds
+
+    except Exception:
+        # Token file is corrupt or refresh failed — delete it
+        try:
+            os.remove(TOKEN_FILE)
+        except Exception:
+            pass
+        return None
+
+
+def _delete_token_from_disk():
+    """Remove the persisted token file."""
+    try:
+        if os.path.exists(TOKEN_FILE):
+            os.remove(TOKEN_FILE)
+    except Exception:
+        pass
 
 
 def get_authorization_url() -> str:
@@ -123,6 +194,9 @@ def exchange_code_for_credentials(code: str) -> Optional[Credentials]:
             scopes=SCOPES,
         )
 
+        # Persist to disk so it survives page refreshes
+        _save_token_to_disk(creds)
+
         return creds
 
     except Exception as e:
@@ -132,13 +206,22 @@ def exchange_code_for_credentials(code: str) -> Optional[Credentials]:
 
 def get_user_credentials() -> Optional[Credentials]:
     """
-    Get the current user's OAuth credentials from session state.
+    Get the current user's OAuth credentials.
+
+    Checks session state first, then falls back to disk-persisted token.
 
     Returns:
         Credentials object if authenticated, None otherwise.
     """
     creds = st.session_state.get('oauth_credentials')
+
+    # If nothing in session state, try loading from disk (e.g. after page refresh)
     if creds is None:
+        creds = _load_token_from_disk()
+        if creds:
+            st.session_state['oauth_credentials'] = creds
+            st.session_state['oauth_user_authenticated'] = True
+            return creds
         return None
 
     # Check if credentials are expired and refresh if possible
@@ -147,9 +230,11 @@ def get_user_credentials() -> Optional[Credentials]:
             from google.auth.transport.requests import Request
             creds.refresh(Request())
             st.session_state['oauth_credentials'] = creds
+            _save_token_to_disk(creds)  # Persist refreshed token
         except Exception:
             # Refresh failed — user needs to re-authenticate
             st.session_state.pop('oauth_credentials', None)
+            _delete_token_from_disk()
             return None
 
     return creds
@@ -197,6 +282,7 @@ def show_auth_ui():
         if st.button("🚪 Sign out", key="oauth_signout"):
             st.session_state.pop('oauth_credentials', None)
             st.session_state.pop('oauth_user_authenticated', None)
+            _delete_token_from_disk()
             st.rerun()
     else:
         auth_url = get_authorization_url()
@@ -205,6 +291,7 @@ def show_auth_ui():
 
 
 def logout():
-    """Clear OAuth credentials from session state."""
+    """Clear OAuth credentials from session state and disk."""
     st.session_state.pop('oauth_credentials', None)
     st.session_state.pop('oauth_user_authenticated', None)
+    _delete_token_from_disk()
