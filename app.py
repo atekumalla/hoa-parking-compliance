@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import streamlit as st
 import pandas as pd
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 
 # Register HEIC support with Pillow (iOS default photo format)
 try:
@@ -103,6 +103,64 @@ def load_data():
         except Exception as e:
             st.error(f"❌ Error loading data: {str(e)}")
             st.session_state.data_loaded = False
+
+
+def stamp_photo_with_timestamp(image_bytes: bytes) -> bytes:
+    """
+    Add a white timestamp to the bottom-right corner of a photo.
+    Format: 'Jun 18, 2026 6:17:52 AM'
+    
+    Used only for photos taken via the in-app camera.
+    
+    Args:
+        image_bytes: Raw image bytes.
+    
+    Returns:
+        New image bytes with timestamp overlay (JPG).
+    """
+    pst = ZoneInfo("America/Los_Angeles")
+    now = datetime.now(pst)
+    timestamp_text = now.strftime("%b %d, %Y %-I:%M:%S %p")
+    
+    img = Image.open(BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img)
+    
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    
+    draw = ImageDraw.Draw(img)
+    
+    # Scale font size based on image width (roughly 2.5% of width)
+    font_size = max(20, img.width // 40)
+    
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+    except (OSError, IOError):
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+    
+    # Get text bounding box
+    bbox = draw.textbbox((0, 0), timestamp_text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    
+    # Position: bottom-right with padding
+    padding = max(10, img.width // 80)
+    x = img.width - text_width - padding
+    y = img.height - text_height - padding
+    
+    # Draw shadow for readability
+    draw.text((x + 2, y + 2), timestamp_text, fill=(0, 0, 0), font=font)
+    # Draw white text
+    draw.text((x, y), timestamp_text, fill=(255, 255, 255), font=font)
+    
+    # Save as JPG
+    output = BytesIO()
+    img.save(output, format='JPEG', quality=90)
+    output.seek(0)
+    return output.getvalue()
 
 
 def get_known_vehicles():
@@ -288,14 +346,35 @@ def add_vehicle_entry_form():
     # --- Photo Analysis Section (AI auto-fill) ---
     if is_recognition_available():
         st.subheader("📸 Auto-Fill from Photo")
-        st.caption("Upload a vehicle photo to automatically detect plate, make, model & color")
+        st.caption("Take a photo or upload one to automatically detect plate, make, model & color")
         
-        analysis_photo = st.file_uploader(
-            "Upload a vehicle photo for AI analysis",
-            type=['jpg', 'jpeg', 'png', 'webp', 'heic', 'bmp', 'gif'],
-            key="analysis_photo_uploader",
+        # Camera vs Upload toggle
+        photo_method = st.radio(
+            "Photo source:",
+            ["📷 Camera", "📁 Upload"],
+            horizontal=True,
+            key="photo_method",
             label_visibility="collapsed"
         )
+        
+        analysis_photo = None
+        is_camera_photo = False
+        
+        if photo_method == "📷 Camera":
+            camera_photo = st.camera_input(
+                "Take a photo of the vehicle",
+                key="camera_input"
+            )
+            if camera_photo is not None:
+                analysis_photo = camera_photo
+                is_camera_photo = True
+        else:
+            analysis_photo = st.file_uploader(
+                "Upload a vehicle photo for AI analysis",
+                type=['jpg', 'jpeg', 'png', 'webp', 'heic', 'bmp', 'gif'],
+                key="analysis_photo_uploader",
+                label_visibility="collapsed"
+            )
         
         if analysis_photo is not None:
             col_preview, col_action = st.columns([1, 1])
@@ -303,7 +382,7 @@ def add_vehicle_entry_form():
                 # Apply EXIF orientation to prevent rotation/flip
                 pil_image = Image.open(analysis_photo)
                 pil_image = ImageOps.exif_transpose(pil_image)
-                st.image(pil_image, caption="Uploaded photo", use_container_width=True)
+                st.image(pil_image, caption="Captured photo" if is_camera_photo else "Uploaded photo", use_container_width=True)
                 # Reset file pointer for later use
                 analysis_photo.seek(0)
             with col_action:
@@ -340,7 +419,9 @@ def add_vehicle_entry_form():
                             
                             # Store the photo bytes so it can also be uploaded with the entry
                             st.session_state['analysis_photo_bytes'] = image_bytes
-                            st.session_state['analysis_photo_name'] = analysis_photo.name
+                            st.session_state['analysis_photo_name'] = 'camera_photo.jpg' if is_camera_photo else analysis_photo.name
+                            # Track if this was from camera (for timestamping before Drive upload)
+                            st.session_state['analysis_photo_from_camera'] = is_camera_photo
                             
                             st.rerun()
                         except Exception as e:
@@ -446,6 +527,13 @@ def add_vehicle_entry_form():
                 upload_name = st.session_state.get('analysis_photo_name', 'analyzed_photo.jpg')
             
             if upload_bytes is not None:
+                # Stamp camera photos with timestamp before uploading to Drive
+                if st.session_state.get('analysis_photo_from_camera') and upload_name == st.session_state.get('analysis_photo_name'):
+                    try:
+                        upload_bytes = stamp_photo_with_timestamp(upload_bytes)
+                    except Exception:
+                        pass  # If stamping fails, upload original
+                
                 with st.spinner("Uploading photo to Google Drive..."):
                     oauth_creds = get_user_credentials()
                     success, url, error = st.session_state.drive_manager.upload_photo(
@@ -484,7 +572,8 @@ def add_vehicle_entry_form():
                     # Clear all prefill and analysis state
                     for key in ['prefill_plate', 'prefill_tag', 'prefill_make',
                                 'prefill_model', 'prefill_color',
-                                'analysis_photo_bytes', 'analysis_photo_name']:
+                                'analysis_photo_bytes', 'analysis_photo_name',
+                                'analysis_photo_from_camera']:
                         st.session_state.pop(key, None)
                     
                     # Reset the Quick Select dropdown by incrementing counter (new key = fresh widget)
