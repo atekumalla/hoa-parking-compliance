@@ -357,6 +357,184 @@ class DriveManager:
         """Get the URL for the photos folder."""
         return f"https://drive.google.com/drive/folders/{self.folder_id}"
 
+    def _get_or_create_exports_folder(self, oauth_credentials: OAuthCredentials) -> str:
+        """
+        Get or create the 'exports' folder (sibling to monthly folders).
+
+        Uses OAuth credentials since it may need to create a folder.
+
+        Returns:
+            Folder ID of the exports folder.
+        """
+        if 'exports' in self._monthly_folder_cache:
+            return self._monthly_folder_cache['exports']
+
+        svc = self._get_oauth_service(oauth_credentials)
+
+        query = (
+            f"name = 'exports' and "
+            f"mimeType = 'application/vnd.google-apps.folder' and "
+            f"'{self.folder_id}' in parents and "
+            f"trashed = false"
+        )
+        results = svc.files().list(
+            q=query,
+            spaces='drive',
+            fields='files(id, name)',
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageSize=1
+        ).execute()
+
+        files = results.get('files', [])
+
+        if files:
+            folder_id = files[0]['id']
+        else:
+            folder_metadata = {
+                'name': 'exports',
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [self.folder_id]
+            }
+            folder = svc.files().create(
+                body=folder_metadata,
+                fields='id',
+                supportsAllDrives=True
+            ).execute()
+            folder_id = folder['id']
+
+        self._monthly_folder_cache['exports'] = folder_id
+        return folder_id
+
+    @staticmethod
+    def extract_file_id_from_url(url: str) -> Optional[str]:
+        """Extract Google Drive file ID from a Drive URL."""
+        if not url or not isinstance(url, str):
+            return None
+        # Handle https://drive.google.com/file/d/FILE_ID/view
+        if '/file/d/' in url:
+            parts = url.split('/file/d/')[1]
+            return parts.split('/')[0]
+        # Handle https://drive.google.com/open?id=FILE_ID
+        if 'id=' in url:
+            return url.split('id=')[1].split('&')[0]
+        return None
+
+    def export_vehicle_photos(
+        self,
+        license_plate: str,
+        make: str,
+        model: str,
+        photo_urls: List[str],
+        first_seen: str,
+        last_seen: str,
+        oauth_credentials: OAuthCredentials
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Create an export folder with shortcuts to all photos for a vehicle.
+
+        Creates: exports/{PLATE}_{MAKE}_{MODEL}_{first}_to_{last}/
+        with Drive shortcuts (not copies) to each photo file.
+
+        Args:
+            license_plate: Vehicle plate.
+            make: Vehicle make.
+            model: Vehicle model.
+            photo_urls: List of Google Drive photo URLs.
+            first_seen: First seen date string (YYYY-MM-DD).
+            last_seen: Last seen date string (YYYY-MM-DD).
+            oauth_credentials: User OAuth credentials.
+
+        Returns:
+            Tuple of (success, folder_url, error_message)
+        """
+        if not oauth_credentials:
+            return False, None, "Sign in with Google to export photos."
+
+        # Extract valid file IDs from URLs
+        file_ids = []
+        for url in photo_urls:
+            fid = self.extract_file_id_from_url(url)
+            if fid:
+                file_ids.append(fid)
+
+        if not file_ids:
+            return False, None, "No photos found to export."
+
+        try:
+            svc = self._get_oauth_service(oauth_credentials)
+
+            # Get or create the exports parent folder
+            exports_folder_id = self._get_or_create_exports_folder(oauth_credentials)
+
+            # Build a descriptive folder name
+            safe_plate = license_plate.replace(' ', '').replace('/', '_')
+            parts = [safe_plate]
+            if make and str(make).strip():
+                parts.append(str(make).strip().replace(' ', '-'))
+            if model and str(model).strip():
+                parts.append(str(model).strip().replace(' ', '-'))
+            parts.append(f"{first_seen}_to_{last_seen}")
+            folder_name = '_'.join(parts)
+
+            # Create the export subfolder
+            folder_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [exports_folder_id]
+            }
+            export_folder = svc.files().create(
+                body=folder_metadata,
+                fields='id',
+                supportsAllDrives=True
+            ).execute()
+            export_folder_id = export_folder['id']
+
+            # Create shortcuts to each photo
+            created = 0
+            failed = 0
+            for file_id in file_ids:
+                try:
+                    # Get the original file name
+                    original = svc.files().get(
+                        fileId=file_id,
+                        fields='name',
+                        supportsAllDrives=True
+                    ).execute()
+
+                    shortcut_metadata = {
+                        'name': original.get('name', file_id),
+                        'mimeType': 'application/vnd.google-apps.shortcut',
+                        'shortcutDetails': {
+                            'targetId': file_id
+                        },
+                        'parents': [export_folder_id]
+                    }
+                    svc.files().create(
+                        body=shortcut_metadata,
+                        fields='id',
+                        supportsAllDrives=True
+                    ).execute()
+                    created += 1
+                except Exception:
+                    failed += 1
+
+            folder_url = f"https://drive.google.com/drive/folders/{export_folder_id}"
+
+            if created == 0:
+                return False, None, f"Failed to create any shortcuts ({failed} errors)"
+
+            msg = f"Exported {created} photo(s)"
+            if failed > 0:
+                msg += f" ({failed} failed)"
+
+            return True, folder_url, msg
+
+        except HttpError as e:
+            return False, None, f"Google Drive API error: {str(e)}"
+        except Exception as e:
+            return False, None, f"Export failed: {str(e)}"
+
     @staticmethod
     def _bytes_to_human(num_bytes: int) -> str:
         """Convert bytes to human-readable string."""

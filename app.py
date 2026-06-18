@@ -870,6 +870,43 @@ def show_vehicle_history():
                     }
                 )
                 
+                # Export photos button
+                raw_photo_urls = plate_history['Photo URL'].dropna().tolist()
+                valid_photo_urls = [u for u in raw_photo_urls if u and str(u).strip() and str(u).startswith('http')]
+                
+                if valid_photo_urls:
+                    first_seen = plate_history['Timestamp'].min().strftime('%Y-%m-%d')
+                    last_seen = plate_history['Timestamp'].max().strftime('%Y-%m-%d')
+                    latest_make = str(plate_history.iloc[0].get('Make', '')).strip()
+                    latest_model = str(plate_history.iloc[0].get('Model', '')).strip()
+                    
+                    if st.button(
+                        f"📤 Export {len(valid_photo_urls)} photo(s) to Drive",
+                        key=f"export_photos_{plate}",
+                        help="Creates a folder in Google Drive with shortcuts to all photos for this vehicle"
+                    ):
+                        oauth_creds = get_user_credentials()
+                        if not oauth_creds:
+                            st.warning("⚠️ Sign in with Google first to export photos.")
+                        else:
+                            with st.spinner(f"Exporting {len(valid_photo_urls)} photos for {plate}..."):
+                                success, folder_url, msg = st.session_state.drive_manager.export_vehicle_photos(
+                                    license_plate=plate,
+                                    make=latest_make,
+                                    model=latest_model,
+                                    photo_urls=valid_photo_urls,
+                                    first_seen=first_seen,
+                                    last_seen=last_seen,
+                                    oauth_credentials=oauth_creds
+                                )
+                                if success:
+                                    st.success(f"✅ {msg}")
+                                    st.markdown(f"📂 [Open exported folder in Drive]({folder_url})")
+                                    st.caption("Folder contains shortcuts (not copies) — no extra storage used. "
+                                              "Download the folder from Drive to get all photos as a ZIP.")
+                                else:
+                                    st.error(f"❌ {msg}")
+                
                 st.markdown("---")
 
 
