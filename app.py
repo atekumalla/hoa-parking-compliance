@@ -304,6 +304,85 @@ def _show_todays_entries():
     st.markdown("---")
 
 
+def _clear_entry_state():
+    """Clear all prefill, photo, and pending entry state after a successful save."""
+    for key in ['prefill_plate', 'prefill_tag', 'prefill_make',
+                'prefill_model', 'prefill_color',
+                'attached_photo_bytes', 'attached_photo_name',
+                'attached_photo_from_camera', 'ai_analysis_done',
+                'pending_duplicate_entry']:
+        st.session_state.pop(key, None)
+    st.session_state['qs_reset_counter'] = st.session_state.get('qs_reset_counter', 0) + 1
+    st.session_state.pop('photo_uploader', None)
+    st.session_state.pop('photo_source', None)
+
+
+def _process_and_save_entry(entry_data):
+    """Upload photo (if attached) and save a vehicle entry to Google Sheets."""
+    normalized_plate = entry_data['normalized_plate']
+    tag_number = entry_data['tag_number']
+    make = entry_data['make']
+    model = entry_data['model']
+    warned = entry_data['warned']
+    warned_date = entry_data['warned_date']
+    towed = entry_data['towed']
+    towed_date = entry_data['towed_date']
+
+    # Get/increment warning count
+    warning_count = st.session_state.compliance_engine.get_warning_count(normalized_plate)
+    if warned:
+        warning_count += 1
+        st.session_state.compliance_engine.increment_warning_count(normalized_plate)
+
+    # Handle photo upload
+    photo_url = None
+    upload_bytes = st.session_state.get('attached_photo_bytes')
+    upload_name = st.session_state.get('attached_photo_name', 'photo.jpg')
+
+    if upload_bytes is not None:
+        if st.session_state.get('attached_photo_from_camera'):
+            try:
+                upload_bytes = stamp_photo_with_timestamp(upload_bytes)
+            except Exception:
+                pass  # If stamping fails, upload original
+
+        with st.spinner("Uploading photo to Google Drive..."):
+            oauth_creds = get_user_credentials()
+            success, url, error = st.session_state.drive_manager.upload_photo(
+                upload_bytes, normalized_plate, tag_number, upload_name,
+                oauth_credentials=oauth_creds
+            )
+            if success:
+                photo_url = url
+                st.success("✅ Photo uploaded successfully")
+            else:
+                st.error(f"❌ Photo upload failed: {error}")
+                st.warning("Entry will be saved without photo.")
+
+    # Save to Google Sheets
+    with st.spinner("Saving entry..."):
+        success = st.session_state.sheets_manager.append_entry(
+            license_plate=normalized_plate,
+            tag_number=tag_number,
+            make=make,
+            model=model,
+            warned=warned,
+            warned_date=warned_date,
+            warning_count=warning_count,
+            towed=towed,
+            towed_date=towed_date,
+            photo_url=photo_url
+        )
+
+        if success:
+            st.success(f"✅ Entry added successfully for {normalized_plate}")
+            _clear_entry_state()
+            load_data()
+            st.rerun()
+        else:
+            st.error("❌ Failed to save entry to Google Sheets")
+
+
 def add_vehicle_entry_form():
     """Render the form for adding a new vehicle entry."""
     st.header("📝 Add Vehicle Entry")
@@ -335,7 +414,7 @@ def add_vehicle_entry_form():
             st.session_state['prefill_model'] = vehicle['model']
         else:
             # Only clear prefill if NOT set by photo analysis
-            if not st.session_state.get('analysis_photo_bytes'):
+            if not st.session_state.get('attached_photo_bytes'):
                 st.session_state.pop('prefill_plate', None)
                 st.session_state.pop('prefill_tag', None)
                 st.session_state.pop('prefill_make', None)
@@ -343,59 +422,57 @@ def add_vehicle_entry_form():
     
     st.markdown("---")
     
-    # --- Photo Analysis Section (AI auto-fill) ---
-    if is_recognition_available():
-        st.subheader("📸 Auto-Fill from Photo")
-        st.caption("Take a photo or upload one to automatically detect plate, make, model & color")
-        
-        # Camera vs Upload toggle
-        photo_method = st.radio(
-            "Photo source:",
-            ["📷 Camera", "📁 Upload"],
-            horizontal=True,
-            key="photo_method",
+    # --- Photo Attachment (works with all entry methods) ---
+    st.subheader("📸 Attach Photo")
+    st.caption("Optionally attach a vehicle photo — use AI to auto-fill fields")
+    
+    photo_source = st.radio(
+        "Photo source:",
+        ["No photo", "📷 Take Photo", "📁 Upload File"],
+        horizontal=True,
+        key="photo_source",
+        label_visibility="collapsed"
+    )
+    
+    if photo_source == "📷 Take Photo":
+        camera_photo = st.camera_input(
+            "Take a photo of the vehicle",
+            key="camera_input"
+        )
+        if camera_photo is not None:
+            st.session_state['attached_photo_bytes'] = camera_photo.getvalue()
+            st.session_state['attached_photo_name'] = 'camera_photo.jpg'
+            st.session_state['attached_photo_from_camera'] = True
+    elif photo_source == "📁 Upload File":
+        uploaded_photo = st.file_uploader(
+            "Upload a vehicle photo",
+            type=['jpg', 'jpeg', 'png', 'webp', 'heic', 'bmp', 'gif'],
+            key="photo_uploader",
             label_visibility="collapsed"
         )
-        
-        analysis_photo = None
-        is_camera_photo = False
-        
-        if photo_method == "📷 Camera":
-            camera_photo = st.camera_input(
-                "Take a photo of the vehicle",
-                key="camera_input"
-            )
-            if camera_photo is not None:
-                analysis_photo = camera_photo
-                is_camera_photo = True
-        else:
-            analysis_photo = st.file_uploader(
-                "Upload a vehicle photo for AI analysis",
-                type=['jpg', 'jpeg', 'png', 'webp', 'heic', 'bmp', 'gif'],
-                key="analysis_photo_uploader",
-                label_visibility="collapsed"
-            )
-        
-        if analysis_photo is not None:
-            col_preview, col_action = st.columns([1, 1])
-            with col_preview:
-                # Apply EXIF orientation to prevent rotation/flip
-                pil_image = Image.open(analysis_photo)
-                pil_image = ImageOps.exif_transpose(pil_image)
-                st.image(pil_image, caption="Captured photo" if is_camera_photo else "Uploaded photo", use_container_width=True)
-                # Reset file pointer for later use
-                analysis_photo.seek(0)
-            with col_action:
-                if st.button("🔍 Analyze Photo", type="primary", use_container_width=True):
+        if uploaded_photo is not None:
+            st.session_state['attached_photo_bytes'] = uploaded_photo.getvalue()
+            st.session_state['attached_photo_name'] = uploaded_photo.name
+            st.session_state['attached_photo_from_camera'] = False
+    
+    # Show preview and actions when a photo is attached
+    if st.session_state.get('attached_photo_bytes'):
+        col_preview, col_actions = st.columns([1, 1])
+        with col_preview:
+            pil_image = Image.open(BytesIO(st.session_state['attached_photo_bytes']))
+            pil_image = ImageOps.exif_transpose(pil_image)
+            caption = "📷 Camera photo" if st.session_state.get('attached_photo_from_camera') else "📁 Uploaded photo"
+            st.image(pil_image, caption=caption, use_container_width=True)
+        with col_actions:
+            # AI Analyze button (if OpenAI is configured)
+            if is_recognition_available():
+                if st.button("🔍 Analyze with AI", type="primary", use_container_width=True):
                     with st.spinner("Analyzing vehicle photo with AI..."):
                         try:
-                            image_bytes = analysis_photo.getvalue()
-                            result = analyze_vehicle_photo(image_bytes)
+                            result = analyze_vehicle_photo(st.session_state['attached_photo_bytes'])
                             
-                            # Store results in session state to populate form fields
                             if result.license_plate:
                                 st.session_state['prefill_plate'] = result.license_plate
-                                
                                 # Lookup tag number from existing records
                                 historical = st.session_state.get('historical_data', pd.DataFrame())
                                 if not historical.empty:
@@ -405,7 +482,6 @@ def add_vehicle_entry_form():
                                         tag = match.iloc[0].get('Tag Number', '')
                                         if tag and str(tag).strip():
                                             st.session_state['prefill_tag'] = str(tag).strip()
-                                
                             if result.make:
                                 st.session_state['prefill_make'] = result.make
                             if result.model:
@@ -413,36 +489,53 @@ def add_vehicle_entry_form():
                             if result.color:
                                 st.session_state['prefill_color'] = result.color
                             
-                            st.success("✅ Vehicle analyzed! Fields auto-filled below.")
-                            if result.confidence_notes:
-                                st.info(f"ℹ️ {result.confidence_notes}")
-                            
-                            # Store the photo bytes so it can also be uploaded with the entry
-                            st.session_state['analysis_photo_bytes'] = image_bytes
-                            st.session_state['analysis_photo_name'] = 'camera_photo.jpg' if is_camera_photo else analysis_photo.name
-                            # Track if this was from camera (for timestamping before Drive upload)
-                            st.session_state['analysis_photo_from_camera'] = is_camera_photo
-                            
+                            st.session_state['ai_analysis_done'] = True
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Analysis failed: {str(e)}")
-        
-        # Show what was detected (persistent after rerun)
-        if any(st.session_state.get(k) for k in ['prefill_plate', 'prefill_make', 'prefill_model', 'prefill_color']):
-            detected_parts = []
-            if st.session_state.get('prefill_plate'):
-                detected_parts.append(f"**Plate:** {st.session_state['prefill_plate']}")
-            if st.session_state.get('prefill_tag'):
-                detected_parts.append(f"**Tag:** {st.session_state['prefill_tag']} (from records)")
-            if st.session_state.get('prefill_make'):
-                detected_parts.append(f"**Make:** {st.session_state['prefill_make']}")
-            if st.session_state.get('prefill_model'):
-                detected_parts.append(f"**Model:** {st.session_state['prefill_model']}")
-            if st.session_state.get('prefill_color'):
-                detected_parts.append(f"**Color:** {st.session_state['prefill_color']}")
+            
+            # Remove photo button
+            if st.button("❌ Remove photo", use_container_width=True):
+                for k in ['attached_photo_bytes', 'attached_photo_name',
+                           'attached_photo_from_camera', 'ai_analysis_done']:
+                    st.session_state.pop(k, None)
+                st.rerun()
+    
+    # Show AI detection results (persistent after rerun)
+    if st.session_state.get('ai_analysis_done'):
+        detected_parts = []
+        if st.session_state.get('prefill_plate'):
+            detected_parts.append(f"**Plate:** {st.session_state['prefill_plate']}")
+        if st.session_state.get('prefill_tag'):
+            detected_parts.append(f"**Tag:** {st.session_state['prefill_tag']} (from records)")
+        if st.session_state.get('prefill_make'):
+            detected_parts.append(f"**Make:** {st.session_state['prefill_make']}")
+        if st.session_state.get('prefill_model'):
+            detected_parts.append(f"**Model:** {st.session_state['prefill_model']}")
+        if st.session_state.get('prefill_color'):
+            detected_parts.append(f"**Color:** {st.session_state['prefill_color']}")
+        if detected_parts:
             st.success("🤖 AI Detected: " + " | ".join(detected_parts))
-        
-        st.markdown("---")
+    
+    st.markdown("---")
+    
+    # --- Duplicate confirmation (blocks form until user decides) ---
+    if st.session_state.get('pending_duplicate_entry'):
+        entry = st.session_state['pending_duplicate_entry']
+        plate = entry['normalized_plate']
+        dup_time = entry.get('duplicate_time', 'earlier today')
+
+        st.warning(f"⚠️ **{plate}** was already logged today at **{dup_time}**. Add another entry?")
+
+        col_add, col_skip = st.columns(2)
+        with col_add:
+            if st.button("✅ Add Anyway", type="primary", use_container_width=True, key="dup_add"):
+                _process_and_save_entry(entry)
+        with col_skip:
+            if st.button("❌ Skip", use_container_width=True, key="dup_skip"):
+                _clear_entry_state()
+                st.rerun()
+        return  # Don't render the form while waiting for confirmation
     
     # Pre-fill values
     default_plate = st.session_state.get('prefill_plate', '')
@@ -475,22 +568,9 @@ def add_vehicle_entry_form():
         with col4:
             towed = st.checkbox("🚨 Mark as Towed")
         
-        # Photo upload
-        st.markdown("---")
-        photo_file = st.file_uploader(
-            "Upload Photo (Optional)",
-            type=['jpg', 'jpeg', 'png', 'heic', 'webp', 'bmp', 'gif'],
-            help="Max file size: 10MB. Photo will be converted to JPG. "
-                 "If you already analyzed a photo above, it will be used automatically."
-        )
-        
-        # Option to use the analysis photo
-        use_analysis_photo = False
-        if st.session_state.get('analysis_photo_bytes') and not photo_file:
-            use_analysis_photo = st.checkbox(
-                "📎 Attach the analyzed photo to this entry",
-                value=True
-            )
+        # Photo status
+        if st.session_state.get('attached_photo_bytes'):
+            st.info("📎 Photo attached — will be uploaded with this entry")
         
         # Submit button
         submitted = st.form_submit_button("✅ Submit Entry", use_container_width=True)
@@ -508,83 +588,41 @@ def add_vehicle_entry_form():
             warned_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if warned else None
             towed_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if towed else None
             
-            # Get/increment warning count
-            warning_count = st.session_state.compliance_engine.get_warning_count(normalized_plate)
-            if warned:
-                warning_count += 1
-                st.session_state.compliance_engine.increment_warning_count(normalized_plate)
+            entry_data = {
+                'normalized_plate': normalized_plate,
+                'tag_number': tag_number,
+                'make': make,
+                'model': model,
+                'warned': warned,
+                'warned_date': warned_date,
+                'towed': towed,
+                'towed_date': towed_date,
+            }
             
-            # Handle photo upload
-            photo_url = None
-            upload_bytes = None
-            upload_name = None
-            
-            if photo_file is not None:
-                upload_bytes = photo_file.read()
-                upload_name = photo_file.name
-            elif use_analysis_photo and st.session_state.get('analysis_photo_bytes'):
-                upload_bytes = st.session_state['analysis_photo_bytes']
-                upload_name = st.session_state.get('analysis_photo_name', 'analyzed_photo.jpg')
-            
-            if upload_bytes is not None:
-                # Stamp camera photos with timestamp before uploading to Drive
-                if st.session_state.get('analysis_photo_from_camera') and upload_name == st.session_state.get('analysis_photo_name'):
-                    try:
-                        upload_bytes = stamp_photo_with_timestamp(upload_bytes)
-                    except Exception:
-                        pass  # If stamping fails, upload original
-                
-                with st.spinner("Uploading photo to Google Drive..."):
-                    oauth_creds = get_user_credentials()
-                    success, url, error = st.session_state.drive_manager.upload_photo(
-                        upload_bytes,
-                        normalized_plate,
-                        tag_number,
-                        upload_name,
-                        oauth_credentials=oauth_creds
-                    )
-                    
-                    if success:
-                        photo_url = url
-                        st.success("✅ Photo uploaded successfully")
-                    else:
-                        st.error(f"❌ Photo upload failed: {error}")
-                        st.warning("Entry will be saved without photo.")
-            
-            # Save to Google Sheets
-            with st.spinner("Saving entry..."):
-                success = st.session_state.sheets_manager.append_entry(
-                    license_plate=normalized_plate,
-                    tag_number=tag_number,
-                    make=make,
-                    model=model,
-                    warned=warned,
-                    warned_date=warned_date,
-                    warning_count=warning_count,
-                    towed=towed,
-                    towed_date=towed_date,
-                    photo_url=photo_url
+            # Check for duplicate entry today
+            historical = st.session_state.get('historical_data', pd.DataFrame())
+            if not historical.empty:
+                pst = ZoneInfo("America/Los_Angeles")
+                today_pst = datetime.now(pst).date()
+                df = historical.copy()
+                df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+                df['Timestamp_PST'] = df['Timestamp'].dt.tz_localize(
+                    'America/Los_Angeles', ambiguous='NaT', nonexistent='shift_forward'
                 )
+                today_matches = df[
+                    (df['Timestamp_PST'].dt.date == today_pst) &
+                    (df['License Plate'] == normalized_plate)
+                ]
                 
-                if success:
-                    st.success(f"✅ Entry added successfully for {normalized_plate}")
-                    
-                    # Clear all prefill and analysis state
-                    for key in ['prefill_plate', 'prefill_tag', 'prefill_make',
-                                'prefill_model', 'prefill_color',
-                                'analysis_photo_bytes', 'analysis_photo_name',
-                                'analysis_photo_from_camera']:
-                        st.session_state.pop(key, None)
-                    
-                    # Reset the Quick Select dropdown by incrementing counter (new key = fresh widget)
-                    st.session_state['qs_reset_counter'] = st.session_state.get('qs_reset_counter', 0) + 1
-                    st.session_state.pop('analysis_photo_uploader', None)
-                    
-                    # Reload data
-                    load_data()
+                if not today_matches.empty:
+                    last_time = today_matches['Timestamp'].max().strftime('%I:%M %p')
+                    entry_data['duplicate_time'] = last_time
+                    st.session_state['pending_duplicate_entry'] = entry_data
                     st.rerun()
-                else:
-                    st.error("❌ Failed to save entry to Google Sheets")
+                    return
+            
+            # No duplicate — save directly
+            _process_and_save_entry(entry_data)
 
 
 def show_scoreboard():
