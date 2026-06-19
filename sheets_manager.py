@@ -148,7 +148,9 @@ class SheetsManager:
                 photo_url or ""
             ]
             
-            worksheet.append_row(row)
+            # Use RAW to prevent Sheets from interpreting values like
+            # "27505E5" as scientific notation numbers
+            worksheet.append_row(row, value_input_option='RAW')
             return True
             
         except Exception as e:
@@ -200,6 +202,11 @@ class SheetsManager:
                 
                 if records:
                     df = pd.DataFrame(records)
+                    # Ensure text columns are strings — Google Sheets may
+                    # auto-convert values like "27505E5" to numbers
+                    for col in ['License Plate', 'Tag Number', 'Make', 'Model']:
+                        if col in df.columns:
+                            df[col] = df[col].fillna('').astype(str)
                     all_data.append(df)
                     
             except gspread.WorksheetNotFound:

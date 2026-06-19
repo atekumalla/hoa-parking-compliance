@@ -10,6 +10,7 @@ from io import BytesIO
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
@@ -179,10 +180,10 @@ def get_known_vehicles():
     
     vehicle_list = []
     for _, row in vehicles.iterrows():
-        plate = row.get('License Plate', '')
-        tag = row.get('Tag Number', '')
-        make = row.get('Make', '')
-        model = row.get('Model', '')
+        plate = str(row.get('License Plate', ''))
+        tag = str(row.get('Tag Number', ''))
+        make = str(row.get('Make', ''))
+        model = str(row.get('Model', ''))
         label = f"{plate}"
         if tag:
             label += f" | Tag: {tag}"
@@ -196,7 +197,7 @@ def get_known_vehicles():
             'model': model
         })
     
-    return sorted(vehicle_list, key=lambda x: x['license_plate'])
+    return sorted(vehicle_list, key=lambda x: str(x['license_plate']))
 
 
 def _show_todays_entries():
@@ -435,6 +436,50 @@ def add_vehicle_entry_form():
     )
     
     if photo_source == "📷 Take Photo":
+        # Inject JS to prefer rear camera and request higher resolution.
+        # Streamlit's camera_input hardcodes facingMode:"user" (selfie);
+        # this overrides getUserMedia constraints in all accessible frames.
+        components.html("""
+        <script>
+        (function() {
+            function patchGUM(md) {
+                if (!md || md._rearCamPatched) return;
+                var orig = md.getUserMedia.bind(md);
+                md.getUserMedia = function(c) {
+                    if (c && c.video) {
+                        if (typeof c.video === 'boolean') c.video = {};
+                        c.video.facingMode = { ideal: 'environment' };
+                        if (!c.video.width)  c.video.width  = { ideal: 1920 };
+                        if (!c.video.height) c.video.height = { ideal: 1080 };
+                    }
+                    return orig(c);
+                };
+                md._rearCamPatched = true;
+            }
+            // Patch this frame
+            if (navigator.mediaDevices) patchGUM(navigator.mediaDevices);
+            // Patch parent + sibling iframes (Streamlit same-origin)
+            try {
+                var p = window.parent;
+                if (p.navigator.mediaDevices) patchGUM(p.navigator.mediaDevices);
+                p.document.querySelectorAll('iframe').forEach(function(f) {
+                    try { if (f.contentWindow) patchGUM(f.contentWindow.navigator.mediaDevices); } catch(e){}
+                });
+                new MutationObserver(function(muts) {
+                    muts.forEach(function(m) { m.addedNodes.forEach(function(n) {
+                        var frames = [];
+                        if (n.tagName === 'IFRAME') frames.push(n);
+                        else if (n.querySelectorAll) frames = Array.from(n.querySelectorAll('iframe'));
+                        frames.forEach(function(f) {
+                            var tp = function(){ try { if(f.contentWindow) patchGUM(f.contentWindow.navigator.mediaDevices); } catch(e){} };
+                            tp(); f.addEventListener('load', tp);
+                        });
+                    }); });
+                }).observe(p.document.body, {childList:true, subtree:true});
+            } catch(e){}
+        })();
+        </script>
+        """, height=0)
         camera_photo = st.camera_input(
             "Take a photo of the vehicle",
             key="camera_input"

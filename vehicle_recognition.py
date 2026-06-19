@@ -9,9 +9,11 @@ import base64
 import json
 import os
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Optional
 
 import openai
+from PIL import Image, ImageOps
 
 
 @dataclass
@@ -27,6 +29,41 @@ class VehicleInfo:
 def is_recognition_available() -> bool:
     """Check if vehicle recognition is configured (OPENAI_API_KEY is set)."""
     return bool(os.getenv("OPENAI_API_KEY"))
+
+
+# OpenAI Vision scales images to fit 2048px max and then tiles at 512px.
+# Anything above ~1280px adds tiles (cost) with negligible recognition gain.
+_MAX_DIMENSION = 1280
+_JPEG_QUALITY = 85
+
+
+def _prepare_image_for_api(image_bytes: bytes) -> bytes:
+    """
+    Resize and compress an image before sending to the vision API.
+
+    - Auto-rotates using EXIF data.
+    - Scales so the longest side is at most _MAX_DIMENSION pixels.
+    - Re-encodes as JPEG at _JPEG_QUALITY%.
+
+    This cuts the base64 payload from several MB to ~100-300 KB,
+    reducing latency and per-request token cost without hurting
+    license-plate readability.
+    """
+    img = Image.open(BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img)
+
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    # Only downscale — never upscale a small image
+    w, h = img.size
+    if max(w, h) > _MAX_DIMENSION:
+        scale = _MAX_DIMENSION / max(w, h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=_JPEG_QUALITY)
+    return buf.getvalue()
 
 
 def analyze_vehicle_photo(image_bytes: bytes) -> VehicleInfo:
@@ -53,7 +90,10 @@ def analyze_vehicle_photo(image_bytes: bytes) -> VehicleInfo:
     model = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
 
     client = openai.OpenAI(api_key=api_key)
-    b64 = base64.b64encode(image_bytes).decode()
+
+    # Resize / compress to cut cost and latency
+    optimized = _prepare_image_for_api(image_bytes)
+    b64 = base64.b64encode(optimized).decode()
 
     response = client.chat.completions.create(
         model=model,
