@@ -588,6 +588,29 @@ def add_vehicle_entry_form():
     default_make = st.session_state.get('prefill_make', '')
     default_model = st.session_state.get('prefill_model', '')
     
+    # --- Warning eligibility notification ---
+    # Check if the pre-filled plate is eligible for warning/tow BEFORE the user submits
+    if default_plate:
+        rolling_data = st.session_state.get('rolling_data', pd.DataFrame())
+        historical = st.session_state.get('historical_data', pd.DataFrame())
+        if not rolling_data.empty:
+            normalized_check = st.session_state.compliance_engine.normalize_license_plate(default_plate)
+            status = st.session_state.compliance_engine.check_violation_status(
+                rolling_data, normalized_check, historical
+            )
+            if status['needs_warning']:
+                st.error(
+                    f"🚨 **WARNING REQUIRED:** {normalized_check} has been parked "
+                    f"**{status['unique_days_parked']} days** in the last 30 days (limit: 9). "
+                    f"This is a first violation — **please check the ⚠️ Issue Warning box below!**"
+                )
+            elif status['can_tow']:
+                st.error(
+                    f"🚨 **ELIGIBLE FOR TOWING:** {normalized_check} has been parked "
+                    f"**{status['unique_days_parked']} days** in the last 30 days and was "
+                    f"previously warned. Mark as towed if applicable."
+                )
+    
     with st.form("vehicle_entry_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         
@@ -666,6 +689,22 @@ def add_vehicle_entry_form():
                     st.rerun()
                     return
             
+            # Check if vehicle needs a warning but user didn't check the box
+            if not warned:
+                rolling_data = st.session_state.get('rolling_data', pd.DataFrame())
+                if not rolling_data.empty:
+                    status = st.session_state.compliance_engine.check_violation_status(
+                        rolling_data, normalized_plate,
+                        st.session_state.get('historical_data', pd.DataFrame())
+                    )
+                    if status['needs_warning']:
+                        st.error(
+                            f"🚨 **{normalized_plate}** has been parked "
+                            f"**{status['unique_days_parked']} days** in 30 days (limit: 9). "
+                            f"Please check **⚠️ Issue Warning** and re-submit!"
+                        )
+                        return
+            
             # No duplicate — save directly
             _process_and_save_entry(entry_data)
 
@@ -721,6 +760,80 @@ def show_scoreboard():
             st.info("No data available for the last 90 days.")
     except Exception as e:
         st.warning(f"Could not load tag data: {str(e)}")
+    
+    st.markdown("---")
+    
+    # --- Trending Unwarned Vehicles (approaching or exceeding limit) ---
+    st.markdown("### 🚨 Vehicles Needing Attention (Not Yet Warned)")
+    st.caption("Vehicles with the most unique days parked in the last 30 days that have never been warned.")
+    
+    rolling_data = st.session_state.rolling_data
+    historical = st.session_state.get('historical_data', pd.DataFrame())
+    
+    if not rolling_data.empty and not historical.empty:
+        # Get unique plates from 30-day rolling data
+        plates_in_window = rolling_data['License Plate'].unique()
+        
+        # Find plates that have NEVER been warned in all history
+        warned_plates = set()
+        if 'Warned' in historical.columns:
+            warned_plates = set(
+                historical[historical['Warned'] == 'Y']['License Plate'].unique()
+            )
+        
+        unwarned_plates = [p for p in plates_in_window if p not in warned_plates]
+        
+        if unwarned_plates:
+            rows = []
+            for plate in unwarned_plates:
+                unique_days = st.session_state.compliance_engine.count_unique_parking_days(
+                    rolling_data, plate
+                )
+                if unique_days < 1:
+                    continue
+                # Get tag and last seen from rolling data
+                plate_data = rolling_data[rolling_data['License Plate'] == plate]
+                tag = str(plate_data.iloc[0].get('Tag Number', '')).strip() if not plate_data.empty else ''
+                last_seen = plate_data['Timestamp'].max()
+                rows.append({
+                    'License Plate': plate,
+                    'Tag Number': tag,
+                    'Days (30d)': unique_days,
+                    'Last Seen': last_seen.strftime('%Y-%m-%d') if pd.notna(last_seen) else 'N/A',
+                })
+            
+            if rows:
+                unwarned_df = pd.DataFrame(rows)
+                unwarned_df = unwarned_df.sort_values('Days (30d)', ascending=False).reset_index(drop=True)
+                # Only show vehicles with a meaningful count
+                unwarned_df = unwarned_df.head(15)
+                
+                # Highlight rows exceeding the 9-day limit
+                def highlight_over_limit(row):
+                    if row['Days (30d)'] > 9:
+                        return ['background-color: #5c1a1a; color: #f8d7da'] * len(row)
+                    elif row['Days (30d)'] >= 7:
+                        return ['background-color: #5c4a1a; color: #fff3cd'] * len(row)
+                    return [''] * len(row)
+                
+                styled = unwarned_df.style.apply(highlight_over_limit, axis=1)
+                st.dataframe(
+                    styled,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                over_limit = unwarned_df[unwarned_df['Days (30d)'] > 9]
+                if not over_limit.empty:
+                    st.error(
+                        f"🚨 **{len(over_limit)} vehicle(s)** exceed the 9-day limit "
+                        f"and have NOT been warned yet! Issue warnings on next sighting."
+                    )
+            else:
+                st.info("No unwarned vehicles found in the last 30 days.")
+        else:
+            st.info("All vehicles in the last 30 days have been warned previously.")
+    else:
+        st.info("No data available.")
     
     st.markdown("---")
     
