@@ -689,22 +689,6 @@ def add_vehicle_entry_form():
                     st.rerun()
                     return
             
-            # Check if vehicle needs a warning but user didn't check the box
-            if not warned:
-                rolling_data = st.session_state.get('rolling_data', pd.DataFrame())
-                if not rolling_data.empty:
-                    status = st.session_state.compliance_engine.check_violation_status(
-                        rolling_data, normalized_plate,
-                        st.session_state.get('historical_data', pd.DataFrame())
-                    )
-                    if status['needs_warning']:
-                        st.error(
-                            f"🚨 **{normalized_plate}** has been parked "
-                            f"**{status['unique_days_parked']} days** in 30 days (limit: 9). "
-                            f"Please check **⚠️ Issue Warning** and re-submit!"
-                        )
-                        return
-            
             # No duplicate — save directly
             _process_and_save_entry(entry_data)
 
