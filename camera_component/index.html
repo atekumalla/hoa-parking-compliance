@@ -60,46 +60,63 @@
         var stream = null;
         var facingMode = 'environment';
         var animFrame = null;
+        var captured = false;
         var video = document.getElementById('video');
         var liveCanvas = document.getElementById('liveCanvas');
         var captureCanvas = document.getElementById('captureCanvas');
+        var captureBtn = document.getElementById('captureBtn');
+        var flipBtn = document.getElementById('flipBtn');
         var status = document.getElementById('status');
 
         // --- Camera ---
         function startCamera() {
-            if (stream) {
-                stream.getTracks().forEach(function(t) { t.stop(); });
-            }
+            stopCamera();
+            // Use 'exact' to force the specific camera (not just a preference)
             navigator.mediaDevices.getUserMedia({
                 video: {
-                    facingMode: { ideal: facingMode },
+                    facingMode: { exact: facingMode },
                     width: { ideal: 4032 },
                     height: { ideal: 3024 }
                 },
                 audio: false
-            }).then(function(s) {
-                stream = s;
-                video.srcObject = s;
-                video.play();
-                status.textContent = facingMode === 'environment'
-                    ? '📷 Rear camera active'
-                    : '🤳 Front camera active';
-                startPreviewLoop();
-            }).catch(function(err) {
-                // Fallback without facingMode
+            }).then(onCameraReady).catch(function() {
+                // Fallback: 'exact' failed, try 'ideal'
                 navigator.mediaDevices.getUserMedia({
-                    video: { width: { ideal: 4032 }, height: { ideal: 3024 } },
+                    video: {
+                        facingMode: { ideal: facingMode },
+                        width: { ideal: 4032 },
+                        height: { ideal: 3024 }
+                    },
                     audio: false
-                }).then(function(s) {
-                    stream = s;
-                    video.srcObject = s;
-                    video.play();
-                    status.textContent = '📷 Camera active';
-                    startPreviewLoop();
-                }).catch(function(err2) {
-                    status.textContent = '❌ Cannot access camera: ' + err2.message;
+                }).then(onCameraReady).catch(function() {
+                    // Last resort: any camera
+                    navigator.mediaDevices.getUserMedia({
+                        video: { width: { ideal: 4032 }, height: { ideal: 3024 } },
+                        audio: false
+                    }).then(onCameraReady).catch(function(err) {
+                        status.textContent = '❌ Cannot access camera: ' + err.message;
+                    });
                 });
             });
+        }
+
+        function onCameraReady(s) {
+            stream = s;
+            video.srcObject = s;
+            video.play();
+            captured = false;
+            captureBtn.textContent = '📷 Capture';
+            captureBtn.className = 'capture-btn';
+            flipBtn.classList.remove('hidden');
+            status.textContent = facingMode === 'environment'
+                ? '📷 Rear camera active'
+                : '🤳 Front camera active';
+            startPreviewLoop();
+        }
+
+        function stopCamera() {
+            if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+            if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); stream = null; }
         }
 
         // --- Live Preview Loop (draws rotated frames onto visible canvas) ---
@@ -123,7 +140,6 @@
             var needsRotation = isStreamLandscape && isDevicePortrait;
 
             if (needsRotation) {
-                // Canvas in portrait orientation (swap dimensions)
                 if (liveCanvas.width !== vh || liveCanvas.height !== vw) {
                     liveCanvas.width = vh;
                     liveCanvas.height = vw;
@@ -131,15 +147,10 @@
                 }
                 ctx.save();
                 ctx.translate(vh / 2, vw / 2);
-                if (facingMode === 'environment') {
-                    ctx.rotate(-Math.PI / 2); // 90 CCW for rear camera
-                } else {
-                    ctx.rotate(Math.PI / 2);  // 90 CW for front camera
-                }
+                ctx.rotate(-Math.PI / 2); // 90° CCW — same for both cameras
                 ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
                 ctx.restore();
             } else {
-                // No rotation needed — stream is already correct
                 if (liveCanvas.width !== vw || liveCanvas.height !== vh) {
                     liveCanvas.width = vw;
                     liveCanvas.height = vh;
@@ -166,11 +177,7 @@
                 captureCanvas.width = vh;
                 captureCanvas.height = vw;
                 ctx.translate(vh / 2, vw / 2);
-                if (facingMode === 'environment') {
-                    ctx.rotate(-Math.PI / 2);
-                } else {
-                    ctx.rotate(Math.PI / 2);
-                }
+                ctx.rotate(-Math.PI / 2); // 90° CCW — same for both cameras
                 ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
             } else {
                 captureCanvas.width = vw;
@@ -182,17 +189,28 @@
         }
 
         // --- UI Handlers ---
-        document.getElementById('flipBtn').addEventListener('click', function() {
+        flipBtn.addEventListener('click', function() {
             facingMode = facingMode === 'environment' ? 'user' : 'environment';
             startCamera();
         });
 
-        document.getElementById('captureBtn').addEventListener('click', function() {
+        captureBtn.addEventListener('click', function() {
+            if (captured) {
+                // Retake: restart camera
+                startCamera();
+                return;
+            }
             var dataUrl = capturePhoto();
             if (dataUrl) {
-                // Single click: capture and send immediately
+                // Send photo, stop camera to save power
                 setValue(dataUrl);
-                status.textContent = '✅ Photo captured & sent!';
+                stopCamera();
+                captured = true;
+                captureBtn.textContent = '🔄 Retake';
+                captureBtn.className = 'capture-btn';
+                captureBtn.style.background = '#333';
+                flipBtn.classList.add('hidden');
+                status.textContent = '✅ Photo captured! Scroll down to see preview.';
             }
         });
 

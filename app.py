@@ -548,6 +548,8 @@ def add_vehicle_entry_form():
                 for k in ['attached_photo_bytes', 'attached_photo_name',
                            'attached_photo_from_camera', 'ai_analysis_done']:
                     st.session_state.pop(k, None)
+                # Increment counter to reset the camera component's stored value
+                st.session_state['photo_reset_counter'] = st.session_state.get('photo_reset_counter', 0) + 1
                 st.rerun()
     
     # Show AI detection results (persistent after rerun)
