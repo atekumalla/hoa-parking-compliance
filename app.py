@@ -179,7 +179,7 @@ def _fix_camera_orientation(image_bytes: bytes) -> bytes:
     img = ImageOps.exif_transpose(img)          # honour any EXIF tag first
 
     if img.width > img.height:                  # landscape frame → rotate to portrait
-        img = img.transpose(Image.ROTATE_90)    # 90° counter-clockwise
+        img = img.transpose(Image.ROTATE_270)   # 270° counter-clockwise (i.e., 90° clockwise)
 
     if img.mode != 'RGB':
         img = img.convert('RGB')
