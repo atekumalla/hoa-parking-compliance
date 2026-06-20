@@ -69,7 +69,7 @@
         }
         function setReady() { sendMsg("streamlit:componentReady", { apiVersion: 1 }); }
         function setHeight(h) { sendMsg("streamlit:setFrameHeight", { height: h }); }
-        function setValue(v) { sendMsg("streamlit:setComponentValue", { value: v }); }
+        function setValue(v) { sendMsg("streamlit:setComponentValue", { value: v, dataType: "json" }); }
 
         // --- State ---
         var stream = null;
