@@ -1127,8 +1127,37 @@ def show_vehicle_history():
     effective_make = search_make.strip() or make_dropdown
     effective_model = search_model.strip() or model_dropdown
     
-    # Only search if at least one field has a value
-    if any([effective_plate, effective_tag, effective_make, effective_model]):
+    # Search button
+    col_search, col_clear = st.columns([3, 1])
+    with col_search:
+        if st.button("🔍 Search", type="primary", use_container_width=True):
+            if any([effective_plate, effective_tag, effective_make, effective_model]):
+                st.session_state['history_search'] = {
+                    'plate': effective_plate,
+                    'tag': effective_tag,
+                    'make': effective_make,
+                    'model': effective_model,
+                }
+            else:
+                st.warning("Please enter at least one search field.")
+    with col_clear:
+        if st.button("✕ Clear", use_container_width=True):
+            st.session_state.pop('history_search', None)
+            st.rerun()
+    
+    # Also auto-search when prefilled from scoreboard History button
+    if prefill_plate and 'history_search' not in st.session_state:
+        st.session_state['history_search'] = {
+            'plate': effective_plate, 'tag': '', 'make': '', 'model': ''
+        }
+    
+    # Show results if a search has been performed
+    if st.session_state.get('history_search'):
+        search = st.session_state['history_search']
+        effective_plate = search['plate']
+        effective_tag = search['tag']
+        effective_make = search['make']
+        effective_model = search['model']
         with st.spinner("Searching..."):
             all_data = st.session_state.sheets_manager.get_all_historical_data()
         
