@@ -470,7 +470,9 @@ def add_vehicle_entry_form():
 
         # Patch getUserMedia BEFORE the camera widget initialises:
         #  1. Default to rear camera  (facingMode → environment)
-        #  2. Request high resolution  (≥ 2.1 MP, ideally 1920×1440 = 2.76 MP)
+        #  2. Request high resolution  (≥ 2.1 MP, ideally 2560×1920 = 4.9 MP)
+        #     On portrait phones the frame rotates to 1920×2560 — keeps the
+        #     narrow side at 1920 px for readable license-plate detail.
         # The patch only applies when Streamlit hasn't already set facingMode
         # or deviceId, so the built-in toggle button still works normally.
         components.html("""
@@ -492,8 +494,8 @@ def add_vehicle_entry_form():
                             c.video.facingMode = { ideal: 'environment' };
                         }
                         /* high resolution (ideal, not exact — safe fallback) */
-                        if (!c.video.width)  c.video.width  = { ideal: 1920 };
-                        if (!c.video.height) c.video.height = { ideal: 1440 };
+                        if (!c.video.width)  c.video.width  = { ideal: 2560 };
+                        if (!c.video.height) c.video.height = { ideal: 1920 };
                     }
                 }
                 return orig(c);
