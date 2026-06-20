@@ -176,10 +176,12 @@ def _fix_camera_orientation(image_bytes: bytes) -> bytes:
     Only applied to in-app camera captures — uploaded files are left untouched.
     """
     img = Image.open(BytesIO(image_bytes))
-    img = ImageOps.exif_transpose(img)          # honour any EXIF tag first
+    img = ImageOps.exif_transpose(img)  # Respect EXIF orientation tag
 
-    if img.width > img.height:                  # landscape frame → rotate to portrait
-        img = img.transpose(Image.ROTATE_270)   # 270° counter-clockwise (i.e., 90° clockwise)
+    # The conditional rotation seems to be causing issues.
+    # Let's rely on exif_transpose and see if the browser/device handles it.
+    # if img.width > img.height:
+    #     img = img.transpose(Image.ROTATE_270)
 
     if img.mode != 'RGB':
         img = img.convert('RGB')
