@@ -2,17 +2,18 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #0e1117; font-family: -apple-system, sans-serif; color: #fafafa; }
-        .camera-container { width: 100%; position: relative; }
-        video {
+        .camera-container { width: 100%; text-align: center; }
+        #liveCanvas {
             width: 100%;
             display: block;
-            background: #000;
             border-radius: 8px;
+            background: #000;
         }
+        video { display: none; }
         .controls {
             display: flex; gap: 10px; padding: 12px 0;
             justify-content: center; align-items: center;
@@ -25,18 +26,20 @@
         button:active { opacity: 0.7; }
         .capture-btn { background: #ff4b4b; color: #fff; padding: 14px 28px; font-size: 17px; }
         .flip-btn { background: #333; color: #fff; }
+        .retake-btn { background: #333; color: #fff; }
+        .use-btn { background: #21c354; color: #fff; padding: 14px 28px; font-size: 17px; }
         .status { text-align: center; color: #888; font-size: 13px; padding: 4px 0; }
         .hidden { display: none !important; }
         .preview-container { width: 100%; }
         .preview-container img {
             width: 100%; border-radius: 8px; display: block;
         }
-        .retake-btn { background: #333; color: #fff; }
     </style>
 </head>
 <body>
     <!-- Live Camera View -->
     <div id="liveView" class="camera-container">
+        <canvas id="liveCanvas"></canvas>
         <video id="video" autoplay playsinline muted></video>
         <div class="controls">
             <button class="flip-btn" id="flipBtn">🔄 Flip</button>
@@ -50,11 +53,11 @@
         <img id="previewImg" src="">
         <div class="controls">
             <button class="retake-btn" id="retakeBtn">🔄 Retake</button>
-            <button class="capture-btn" id="useBtn">✅ Use Photo</button>
+            <button class="use-btn" id="useBtn">✅ Use Photo</button>
         </div>
     </div>
 
-    <canvas id="canvas" style="display:none"></canvas>
+    <canvas id="captureCanvas" style="display:none"></canvas>
 
     <script>
     (function() {
@@ -69,76 +72,118 @@
         function setValue(v) { sendMsg("streamlit:setComponentValue", { value: v }); }
 
         // --- State ---
-        let stream = null;
-        let facingMode = 'environment'; // Rear camera by default
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const status = document.getElementById('status');
-        const liveView = document.getElementById('liveView');
-        const previewView = document.getElementById('previewView');
-        const previewImg = document.getElementById('previewImg');
+        var stream = null;
+        var facingMode = 'environment';
+        var animFrame = null;
+        var video = document.getElementById('video');
+        var liveCanvas = document.getElementById('liveCanvas');
+        var captureCanvas = document.getElementById('captureCanvas');
+        var status = document.getElementById('status');
+        var liveView = document.getElementById('liveView');
+        var previewView = document.getElementById('previewView');
+        var previewImg = document.getElementById('previewImg');
 
         // --- Camera ---
-        async function startCamera() {
-            // Stop existing stream
+        function startCamera() {
             if (stream) {
-                stream.getTracks().forEach(t => t.stop());
+                stream.getTracks().forEach(function(t) { t.stop(); });
             }
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: { ideal: facingMode },
-                        width: { ideal: 1920 },
-                        height: { ideal: 1440 }
-                    },
-                    audio: false
-                });
-                video.srcObject = stream;
+            navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: { ideal: facingMode },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1440 }
+                },
+                audio: false
+            }).then(function(s) {
+                stream = s;
+                video.srcObject = s;
+                video.play();
                 status.textContent = facingMode === 'environment'
                     ? '📷 Rear camera active'
                     : '🤳 Front camera active';
-            } catch (err) {
-                status.textContent = '❌ ' + err.message;
-                // Fallback: try without facingMode constraint
-                try {
-                    stream = await navigator.mediaDevices.getUserMedia({
-                        video: { width: { ideal: 1920 }, height: { ideal: 1440 } },
-                        audio: false
-                    });
-                    video.srcObject = stream;
-                    status.textContent = '📷 Camera active (default)';
-                } catch (err2) {
+                startPreviewLoop();
+            }).catch(function(err) {
+                // Fallback without facingMode
+                navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 1920 }, height: { ideal: 1440 } },
+                    audio: false
+                }).then(function(s) {
+                    stream = s;
+                    video.srcObject = s;
+                    video.play();
+                    status.textContent = '📷 Camera active';
+                    startPreviewLoop();
+                }).catch(function(err2) {
                     status.textContent = '❌ Cannot access camera: ' + err2.message;
-                }
-            }
-            updateHeight();
+                });
+            });
         }
 
-        // --- Capture with orientation correction ---
-        function capturePhoto() {
-            const vw = video.videoWidth;
-            const vh = video.videoHeight;
+        // --- Live Preview Loop (draws rotated frames onto visible canvas) ---
+        function startPreviewLoop() {
+            if (animFrame) cancelAnimationFrame(animFrame);
+            drawPreview();
+        }
+
+        function drawPreview() {
+            var vw = video.videoWidth;
+            var vh = video.videoHeight;
 
             if (!vw || !vh) {
-                status.textContent = '⚠️ Camera not ready yet';
+                animFrame = requestAnimationFrame(drawPreview);
                 return;
             }
 
-            const ctx = canvas.getContext('2d');
-
-            // Detect: landscape stream + portrait device = needs rotation
-            const isStreamLandscape = vw > vh;
-            const isDevicePortrait = window.innerHeight > window.innerWidth;
-            const needsRotation = isStreamLandscape && isDevicePortrait;
+            var ctx = liveCanvas.getContext('2d');
+            var isStreamLandscape = vw > vh;
+            var isDevicePortrait = window.innerHeight > window.innerWidth;
+            var needsRotation = isStreamLandscape && isDevicePortrait;
 
             if (needsRotation) {
-                // Rotate to portrait
-                canvas.width = vh;
-                canvas.height = vw;
+                // Canvas in portrait orientation (swap dimensions)
+                if (liveCanvas.width !== vh || liveCanvas.height !== vw) {
+                    liveCanvas.width = vh;
+                    liveCanvas.height = vw;
+                    updateHeight();
+                }
+                ctx.save();
                 ctx.translate(vh / 2, vw / 2);
+                if (facingMode === 'environment') {
+                    ctx.rotate(-Math.PI / 2); // 90 CCW for rear camera
+                } else {
+                    ctx.rotate(Math.PI / 2);  // 90 CW for front camera
+                }
+                ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
+                ctx.restore();
+            } else {
+                // No rotation needed — stream is already correct
+                if (liveCanvas.width !== vw || liveCanvas.height !== vh) {
+                    liveCanvas.width = vw;
+                    liveCanvas.height = vh;
+                    updateHeight();
+                }
+                ctx.drawImage(video, 0, 0, vw, vh);
+            }
 
-                // Rear camera: rotate 90° CCW (-π/2)
-                // Front camera: rotate 90° CW (+π/2)
+            animFrame = requestAnimationFrame(drawPreview);
+        }
+
+        // --- Capture full-resolution photo (same rotation logic) ---
+        function capturePhoto() {
+            var vw = video.videoWidth;
+            var vh = video.videoHeight;
+            if (!vw || !vh) return null;
+
+            var ctx = captureCanvas.getContext('2d');
+            var isStreamLandscape = vw > vh;
+            var isDevicePortrait = window.innerHeight > window.innerWidth;
+            var needsRotation = isStreamLandscape && isDevicePortrait;
+
+            if (needsRotation) {
+                captureCanvas.width = vh;
+                captureCanvas.height = vw;
+                ctx.translate(vh / 2, vw / 2);
                 if (facingMode === 'environment') {
                     ctx.rotate(-Math.PI / 2);
                 } else {
@@ -146,15 +191,12 @@
                 }
                 ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
             } else {
-                // Stream already in correct orientation
-                canvas.width = vw;
-                canvas.height = vh;
+                captureCanvas.width = vw;
+                captureCanvas.height = vh;
                 ctx.drawImage(video, 0, 0, vw, vh);
             }
 
-            // Generate JPEG
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-            return dataUrl;
+            return captureCanvas.toDataURL('image/jpeg', 0.92);
         }
 
         // --- UI Handlers ---
@@ -164,46 +206,48 @@
         });
 
         document.getElementById('captureBtn').addEventListener('click', function() {
-            const dataUrl = capturePhoto();
+            var dataUrl = capturePhoto();
             if (dataUrl) {
-                // Show preview
                 previewImg.src = dataUrl;
                 liveView.classList.add('hidden');
                 previewView.classList.remove('hidden');
+                if (animFrame) cancelAnimationFrame(animFrame);
                 updateHeight();
             }
         });
 
         document.getElementById('retakeBtn').addEventListener('click', function() {
-            // Back to live view
             previewView.classList.add('hidden');
             liveView.classList.remove('hidden');
+            startPreviewLoop();
             updateHeight();
         });
 
         document.getElementById('useBtn').addEventListener('click', function() {
-            // Send to Streamlit
-            const dataUrl = previewImg.src;
+            var dataUrl = previewImg.src;
             setValue(dataUrl);
             status.textContent = '✅ Photo sent!';
-            // Go back to live view for potential next capture
             previewView.classList.add('hidden');
             liveView.classList.remove('hidden');
+            startPreviewLoop();
             updateHeight();
         });
 
         // --- Height management ---
         function updateHeight() {
             setTimeout(function() {
-                setHeight(document.body.scrollHeight + 10);
-            }, 100);
+                setHeight(document.body.scrollHeight + 20);
+            }, 150);
         }
 
-        // Listen for Streamlit render events
         window.addEventListener("message", function(event) {
             if (event.data && event.data.type === "streamlit:render") {
                 updateHeight();
             }
+        });
+
+        window.addEventListener('resize', function() {
+            updateHeight();
         });
 
         // --- Init ---
