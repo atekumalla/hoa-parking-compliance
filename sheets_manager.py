@@ -5,6 +5,7 @@ Handles authentication, reading, and writing data to Google Sheets.
 
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional, Tuple
 import gspread
 from google.oauth2.service_account import Credentials
@@ -153,7 +154,7 @@ class SheetsManager:
             current_tab = self.get_month_tab_name()
             worksheet = self.get_or_create_tab(current_tab)
             
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S")
             
             row = [
                 timestamp,

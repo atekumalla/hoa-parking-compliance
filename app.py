@@ -658,9 +658,10 @@ def add_vehicle_entry_form():
             # Normalize license plate
             normalized_plate = st.session_state.compliance_engine.normalize_license_plate(license_plate)
             
-            # Prepare timestamps
-            warned_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if warned else None
-            towed_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if towed else None
+            # Prepare timestamps (PST)
+            pst_now = datetime.now(ZoneInfo("America/Los_Angeles"))
+            warned_date = pst_now.strftime("%Y-%m-%d %H:%M:%S") if warned else None
+            towed_date = pst_now.strftime("%Y-%m-%d %H:%M:%S") if towed else None
             
             entry_data = {
                 'normalized_plate': normalized_plate,
@@ -986,9 +987,10 @@ def show_quick_add_modal():
             st.rerun()
         
         if submitted:
-            # Prepare timestamps
-            warned_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if warned else None
-            towed_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if towed else None
+            # Prepare timestamps (PST)
+            pst_now = datetime.now(ZoneInfo("America/Los_Angeles"))
+            warned_date = pst_now.strftime("%Y-%m-%d %H:%M:%S") if warned else None
+            towed_date = pst_now.strftime("%Y-%m-%d %H:%M:%S") if towed else None
             
             # Get/increment warning count
             warning_count = st.session_state.compliance_engine.get_warning_count(vehicle['license_plate'])
