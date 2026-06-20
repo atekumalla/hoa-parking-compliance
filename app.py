@@ -164,6 +164,33 @@ def stamp_photo_with_timestamp(image_bytes: bytes) -> bytes:
     return output.getvalue()
 
 
+def _fix_camera_orientation(image_bytes: bytes) -> bytes:
+    """
+    Fix orientation for photos captured via st.camera_input on mobile.
+
+    Mobile rear-camera sensors capture in landscape. Streamlit's canvas-based
+    snapshot grabs the raw sensor frame without applying the device rotation,
+    so the resulting JPEG is landscape even when the phone is held portrait.
+    This detects that case and rotates the image 90° CCW to restore portrait
+    orientation.
+
+    Only applied to in-app camera captures — uploaded files are left untouched.
+    """
+    img = Image.open(BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img)          # honour any EXIF tag first
+
+    if img.width > img.height:                  # landscape frame → rotate to portrait
+        img = img.transpose(Image.ROTATE_90)    # 90° counter-clockwise
+
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+
+    buf = BytesIO()
+    img.save(buf, format='JPEG', quality=90)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def get_known_vehicles():
     """Get a list of known vehicles from historical data for quick-add dropdowns."""
     if not st.session_state.get('data_loaded', False):
@@ -491,7 +518,9 @@ def add_vehicle_entry_form():
             key=f"camera_input_{st.session_state.get('photo_reset_counter', 0)}"
         )
         if camera_photo is not None:
-            st.session_state['attached_photo_bytes'] = camera_photo.getvalue()
+            # Fix mobile rear-camera orientation (sensor delivers landscape)
+            fixed_bytes = _fix_camera_orientation(camera_photo.getvalue())
+            st.session_state['attached_photo_bytes'] = fixed_bytes
             st.session_state['attached_photo_name'] = 'camera_photo.jpg'
             st.session_state['attached_photo_from_camera'] = True
     elif photo_source == "📁 Upload File":
