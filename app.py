@@ -5,11 +5,13 @@ A web application for tracking and enforcing HOA guest parking rules.
 """
 
 import os
+import base64
 from datetime import datetime
 from io import BytesIO
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
@@ -38,6 +40,10 @@ GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
 GOOGLE_CREDENTIALS_PATH = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 SCOREBOARD_TOP_N = int(os.getenv('SCOREBOARD_TOP_N', '20'))
+
+# Custom camera component (replaces st.camera_input for proper mobile support)
+_CAMERA_COMPONENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_component")
+_camera_capture = components.declare_component("camera_capture", path=_CAMERA_COMPONENT_DIR)
 
 
 def initialize_app():
@@ -465,41 +471,26 @@ def add_vehicle_entry_form():
     )
     
     if photo_source == "📷 Take Photo":
-        st.caption("💡 Use the 🔄 icon (top-right) to switch to rear camera.")
-
-        # Streamlit's st.camera_input has hard limitations on mobile:
-        #  - Always opens front camera (no API to change default)
-        #  - Shows a rotated preview after capture (can't fix internally)
-        #  - JS injection blocked by CSP / iframe sandbox
-        #
-        # Our workaround:
-        #  1. CSS: hide Streamlit's rotated preview (the <img> after capture)
-        #  2. CSS: rotate the live video feed 90° CW to correct viewfinder
-        #  3. Python: _fix_camera_orientation corrects the saved photo
-        #  4. Only show OUR corrected preview below the widget
-        st.markdown("""
-        <style>
-        /* Rotate live viewfinder to portrait (sensor delivers landscape) */
-        [data-testid="stCameraInput"] video {
-            transform: rotate(90deg);
-        }
-        /* Hide Streamlit's rotated captured preview — we show our own corrected one */
-        [data-testid="stCameraInput"] img {
-            display: none !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
-        camera_photo = st.camera_input(
-            "Take a photo of the vehicle",
-            key=f"camera_input_{st.session_state.get('photo_reset_counter', 0)}"
+        # Custom HTML/JS camera component — bypasses all st.camera_input limitations:
+        #  ✓ Defaults to rear camera (facingMode: environment)
+        #  ✓ High resolution (1920×1440 ideal)
+        #  ✓ Correct orientation (detects landscape stream → rotates to portrait)
+        #  ✓ Built-in flip button and preview before confirming
+        photo_data = _camera_capture(
+            key=f"camera_capture_{st.session_state.get('photo_reset_counter', 0)}",
+            default=None
         )
-        if camera_photo is not None:
-            # Fix mobile rear-camera orientation (sensor delivers landscape)
-            fixed_bytes = _fix_camera_orientation(camera_photo.getvalue())
-            st.session_state['attached_photo_bytes'] = fixed_bytes
-            st.session_state['attached_photo_name'] = 'camera_photo.jpg'
-            st.session_state['attached_photo_from_camera'] = True
+        if photo_data is not None:
+            # Decode base64 data URL → raw JPEG bytes
+            # Format: "data:image/jpeg;base64,<data>"
+            try:
+                header, b64data = photo_data.split(",", 1)
+                raw_bytes = base64.b64decode(b64data)
+                st.session_state['attached_photo_bytes'] = raw_bytes
+                st.session_state['attached_photo_name'] = 'camera_photo.jpg'
+                st.session_state['attached_photo_from_camera'] = True
+            except Exception as e:
+                st.error(f"❌ Failed to process captured photo: {e}")
     elif photo_source == "📁 Upload File":
         uploaded_photo = st.file_uploader(
             "Upload a vehicle photo",
