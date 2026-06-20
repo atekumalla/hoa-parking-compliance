@@ -314,8 +314,10 @@ def _clear_entry_state():
                 'pending_duplicate_entry']:
         st.session_state.pop(key, None)
     st.session_state['qs_reset_counter'] = st.session_state.get('qs_reset_counter', 0) + 1
-    st.session_state.pop('photo_uploader', None)
-    st.session_state.pop('photo_source', None)
+    # Don't pop widget keys directly — it confuses Streamlit's internal state
+    # and makes camera/upload widgets unresponsive until manually toggled.
+    # Instead, the counter-based keys on the widgets force fresh instances.
+    st.session_state['photo_reset_counter'] = st.session_state.get('photo_reset_counter', 0) + 1
 
 
 def _process_and_save_entry(entry_data):
@@ -427,11 +429,12 @@ def add_vehicle_entry_form():
     st.subheader("📸 Attach Photo")
     st.caption("Optionally attach a vehicle photo — use AI to auto-fill fields")
     
+    photo_key = f"photo_source_{st.session_state.get('photo_reset_counter', 0)}"
     photo_source = st.radio(
         "Photo source:",
         ["No photo", "📷 Take Photo", "📁 Upload File"],
         horizontal=True,
-        key="photo_source",
+        key=photo_key,
         label_visibility="collapsed"
     )
     
@@ -484,7 +487,7 @@ def add_vehicle_entry_form():
                    "The captured photo will be correctly oriented.")
         camera_photo = st.camera_input(
             "Take a photo of the vehicle",
-            key="camera_input"
+            key=f"camera_input_{st.session_state.get('photo_reset_counter', 0)}"
         )
         if camera_photo is not None:
             st.session_state['attached_photo_bytes'] = camera_photo.getvalue()
@@ -494,7 +497,7 @@ def add_vehicle_entry_form():
         uploaded_photo = st.file_uploader(
             "Upload a vehicle photo",
             type=['jpg', 'jpeg', 'png', 'webp', 'heic', 'bmp', 'gif'],
-            key="photo_uploader",
+            key=f"photo_uploader_{st.session_state.get('photo_reset_counter', 0)}",
             label_visibility="collapsed"
         )
         if uploaded_photo is not None:
