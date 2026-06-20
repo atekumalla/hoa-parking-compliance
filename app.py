@@ -5,12 +5,12 @@ A web application for tracking and enforcing HOA guest parking rules.
 """
 
 import os
+import html as html_mod
 from datetime import datetime
 from io import BytesIO
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
@@ -468,41 +468,35 @@ def add_vehicle_entry_form():
     if photo_source == "📷 Take Photo":
         st.caption("💡 Tap the 🔄 icon (top-right of viewfinder) to switch cameras.")
 
-        # Patch getUserMedia BEFORE the camera widget initialises:
-        #  1. Default to rear camera  (facingMode → environment)
-        #  2. Request high resolution  (≥ 2.1 MP, ideally 2560×1920 = 4.9 MP)
-        #     On portrait phones the frame rotates to 1920×2560 — keeps the
-        #     narrow side at 1920 px for readable license-plate detail.
-        # The patch only applies when Streamlit hasn't already set facingMode
-        # or deviceId, so the built-in toggle button still works normally.
-        components.html("""
-        <script>
-        (function() {
-            var w = window.parent;
-            if (w._gumPatched) return;
-            w._gumPatched = true;
-
-            var orig = w.navigator.mediaDevices.getUserMedia.bind(
-                           w.navigator.mediaDevices);
-
-            w.navigator.mediaDevices.getUserMedia = function(c) {
-                if (c && c.video) {
-                    if (c.video === true) c.video = {};
-                    if (typeof c.video === 'object') {
-                        /* rear camera by default */
-                        if (!c.video.facingMode && !c.video.deviceId) {
-                            c.video.facingMode = { ideal: 'environment' };
-                        }
-                        /* high resolution (ideal, not exact — safe fallback) */
-                        if (!c.video.width)  c.video.width  = { ideal: 2560 };
-                        if (!c.video.height) c.video.height = { ideal: 1920 };
-                    }
-                }
-                return orig(c);
-            };
-        })();
-        </script>
-        """, height=0)
+        # Inject getUserMedia patch directly into the page DOM.
+        # components.html / st.html use sandboxed iframes that CANNOT access
+        # the parent's navigator, so we use an <img onerror> trick instead.
+        # The JS runs in the real page context and patches getUserMedia to:
+        #  1. Default to rear camera on every fresh camera open
+        #  2. Request high resolution (1920×1440 = 2.76 MP; portrait = 1440×1920)
+        # The _forceRear flag resets each Streamlit render so initial open
+        # always uses rear camera, but the toggle button still works.
+        _cam_js = (
+            "(function(){"
+            "if(!window._gumOrig){"
+            "window._gumOrig=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);"
+            "navigator.mediaDevices.getUserMedia=function(c){"
+            "if(c&&c.video){"
+            "if(c.video===true)c.video={};"
+            "if(typeof c.video==='object'){"
+            "if(window._forceRear){c.video.facingMode={ideal:'environment'};window._forceRear=false;}"
+            "c.video.width={ideal:1920};c.video.height={ideal:1440};"
+            "}}"
+            "return window._gumOrig(c);};"
+            "}"
+            "window._forceRear=true;"
+            "this.remove();"
+            "})();"
+        )
+        st.markdown(
+            f'<img src="x" onerror="{html_mod.escape(_cam_js, quote=True)}" style="display:none">',
+            unsafe_allow_html=True,
+        )
 
         camera_photo = st.camera_input(
             "Take a photo of the vehicle",
