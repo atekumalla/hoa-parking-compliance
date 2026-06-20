@@ -10,7 +10,6 @@ from io import BytesIO
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
@@ -466,77 +465,10 @@ def add_vehicle_entry_form():
     )
     
     if photo_source == "📷 Take Photo":
-        # Use st.camera_input (WebRTC) — this does NOT save to the phone's
-        # camera roll. The live preview may appear landscape due to how mobile
-        # browsers deliver the camera sensor stream, but the captured photo
-        # will be correctly oriented after EXIF transpose.
-        # We patch getUserMedia to prefer the rear camera.
-        components.html("""
-        <script>
-        (function() {
-            function patchGUM(md) {
-                if (!md || md._rearCamPatched) return;
-                var orig = md.getUserMedia.bind(md);
-                md.getUserMedia = function(c) {
-                    if (c && c.video) {
-                        if (typeof c.video === 'boolean') c.video = {};
-                        c.video.facingMode = { ideal: 'environment' };
-                    }
-                    return orig(c);
-                };
-                md._rearCamPatched = true;
-            }
-            // Inject CSS to rotate the live video preview 90° CCW on mobile.
-            // The camera sensor delivers a landscape stream; the browser shows
-            // it unrotated, so we apply a CSS transform to display it portrait.
-            // The captured photo is corrected server-side by _fix_camera_orientation().
-            function injectRotateCSS(doc) {
-                if (doc._camCSSInjected) return;
-                try {
-                    var isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-                    if (!isMobile) return;
-                    var style = doc.createElement('style');
-                    style.textContent =
-                        '[data-testid="stCameraInput"] video {' +
-                        '  transform: rotate(-90deg);' +
-                        '  transform-origin: center center;' +
-                        '}';
-                    doc.head.appendChild(style);
-                    doc._camCSSInjected = true;
-                } catch(e){}
-            }
-            try {
-                var p = window.parent;
-                if (p.navigator.mediaDevices) patchGUM(p.navigator.mediaDevices);
-                injectRotateCSS(p.document);
-                p.document.querySelectorAll('iframe').forEach(function(f) {
-                    try {
-                        if (f.contentWindow && f.contentWindow.navigator.mediaDevices)
-                            patchGUM(f.contentWindow.navigator.mediaDevices);
-                        if (f.contentDocument) injectRotateCSS(f.contentDocument);
-                    } catch(e){}
-                });
-                new MutationObserver(function(muts) {
-                    muts.forEach(function(m) { m.addedNodes.forEach(function(n) {
-                        if (n.tagName === 'IFRAME' || (n.querySelectorAll)) {
-                            var frames = n.tagName === 'IFRAME' ? [n] : Array.from(n.querySelectorAll('iframe') || []);
-                            frames.forEach(function(f) {
-                                var patch = function(){
-                                    try {
-                                        if(f.contentWindow) patchGUM(f.contentWindow.navigator.mediaDevices);
-                                        if(f.contentDocument) injectRotateCSS(f.contentDocument);
-                                    } catch(e){}
-                                };
-                                patch(); f.addEventListener('load', patch);
-                            });
-                        }
-                    }); });
-                }).observe(p.document.body, {childList:true, subtree:true});
-            } catch(e){}
-        })();
-        </script>
-        """, height=0)
-        st.caption("💡 Uses the rear camera. Hold your phone in portrait mode.")
+        # Streamlit's camera_input has a built-in switch button (↔ icon,
+        # top-right) on mobile to toggle between front and rear cameras.
+        # No getUserMedia patch needed — that was causing 90° rotation bugs.
+        st.caption("💡 Tap the 🔄 icon (top-right of viewfinder) to switch to the rear camera.")
         camera_photo = st.camera_input(
             "Take a photo of the vehicle",
             key=f"camera_input_{st.session_state.get('photo_reset_counter', 0)}"
