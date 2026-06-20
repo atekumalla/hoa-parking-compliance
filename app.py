@@ -454,9 +454,10 @@ def add_vehicle_entry_form():
                     if (c && c.video) {
                         if (typeof c.video === 'boolean') c.video = {};
                         c.video.facingMode = { ideal: 'environment' };
-                        // Remove fixed dimensions — let device choose orientation
-                        delete c.video.width;
-                        delete c.video.height;
+                        // Keep Streamlit's default width/height constraints —
+                        // deleting them causes the browser to use the sensor's
+                        // native (landscape) orientation, producing a 90° rotated
+                        // preview and capture on mobile devices.
                     }
                     return orig(c);
                 };
@@ -483,8 +484,8 @@ def add_vehicle_entry_form():
         })();
         </script>
         """, height=0)
-        st.caption("💡 The live preview may appear landscape — this is normal. "
-                   "The captured photo will be correctly oriented.")
+        st.caption("💡 Uses the rear camera by default. "
+                   "Hold your phone in portrait mode for best results.")
         camera_photo = st.camera_input(
             "Take a photo of the vehicle",
             key=f"camera_input_{st.session_state.get('photo_reset_counter', 0)}"
