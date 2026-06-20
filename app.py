@@ -260,7 +260,7 @@ def _show_todays_entries():
     # Get 30-day rolling data for the "days in 30" count
     rolling_data = st.session_state.get('rolling_data', pd.DataFrame())
     
-    # Prepare display table
+    # Prepare display table — keep Timestamp for proper sorting, then drop it
     display_df = df_today[['Timestamp', 'License Plate', 'Tag Number', 'Make', 'Model', 'Warned', 'Towed']].copy()
     display_df['Time'] = display_df['Timestamp'].dt.strftime('%I:%M %p')
     
@@ -275,8 +275,9 @@ def _show_todays_entries():
         days_30.append(count)
     display_df['Days (30d)'] = days_30
     
+    # Sort by actual timestamp (newest first), then drop Timestamp for display
+    display_df = display_df.sort_values('Timestamp', ascending=False).reset_index(drop=True)
     display_df = display_df[['Time', 'License Plate', 'Tag Number', 'Make', 'Model', 'Days (30d)', 'Warned', 'Towed']]
-    display_df = display_df.sort_values('Time', ascending=False).reset_index(drop=True)
     
     # Store original timestamps for deletion (before converting to string)
     timestamps_for_delete = df_today.sort_values('Timestamp', ascending=False)['Timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S').tolist()

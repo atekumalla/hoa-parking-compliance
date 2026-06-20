@@ -26,14 +26,8 @@
         button:active { opacity: 0.7; }
         .capture-btn { background: #ff4b4b; color: #fff; padding: 14px 28px; font-size: 17px; }
         .flip-btn { background: #333; color: #fff; }
-        .retake-btn { background: #333; color: #fff; }
-        .use-btn { background: #21c354; color: #fff; padding: 14px 28px; font-size: 17px; }
         .status { text-align: center; color: #888; font-size: 13px; padding: 4px 0; }
         .hidden { display: none !important; }
-        .preview-container { width: 100%; }
-        .preview-container img {
-            width: 100%; border-radius: 8px; display: block;
-        }
     </style>
 </head>
 <body>
@@ -46,15 +40,6 @@
             <button class="capture-btn" id="captureBtn">📷 Capture</button>
         </div>
         <div class="status" id="status">Starting rear camera...</div>
-    </div>
-
-    <!-- Photo Preview (after capture) -->
-    <div id="previewView" class="hidden preview-container">
-        <img id="previewImg" src="">
-        <div class="controls">
-            <button class="retake-btn" id="retakeBtn">🔄 Retake</button>
-            <button class="use-btn" id="useBtn">✅ Use Photo</button>
-        </div>
     </div>
 
     <canvas id="captureCanvas" style="display:none"></canvas>
@@ -79,9 +64,6 @@
         var liveCanvas = document.getElementById('liveCanvas');
         var captureCanvas = document.getElementById('captureCanvas');
         var status = document.getElementById('status');
-        var liveView = document.getElementById('liveView');
-        var previewView = document.getElementById('previewView');
-        var previewImg = document.getElementById('previewImg');
 
         // --- Camera ---
         function startCamera() {
@@ -91,8 +73,8 @@
             navigator.mediaDevices.getUserMedia({
                 video: {
                     facingMode: { ideal: facingMode },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1440 }
+                    width: { ideal: 4032 },
+                    height: { ideal: 3024 }
                 },
                 audio: false
             }).then(function(s) {
@@ -106,7 +88,7 @@
             }).catch(function(err) {
                 // Fallback without facingMode
                 navigator.mediaDevices.getUserMedia({
-                    video: { width: { ideal: 1920 }, height: { ideal: 1440 } },
+                    video: { width: { ideal: 4032 }, height: { ideal: 3024 } },
                     audio: false
                 }).then(function(s) {
                     stream = s;
@@ -208,29 +190,10 @@
         document.getElementById('captureBtn').addEventListener('click', function() {
             var dataUrl = capturePhoto();
             if (dataUrl) {
-                previewImg.src = dataUrl;
-                liveView.classList.add('hidden');
-                previewView.classList.remove('hidden');
-                if (animFrame) cancelAnimationFrame(animFrame);
-                updateHeight();
+                // Single click: capture and send immediately
+                setValue(dataUrl);
+                status.textContent = '✅ Photo captured & sent!';
             }
-        });
-
-        document.getElementById('retakeBtn').addEventListener('click', function() {
-            previewView.classList.add('hidden');
-            liveView.classList.remove('hidden');
-            startPreviewLoop();
-            updateHeight();
-        });
-
-        document.getElementById('useBtn').addEventListener('click', function() {
-            var dataUrl = previewImg.src;
-            setValue(dataUrl);
-            status.textContent = '✅ Photo sent!';
-            previewView.classList.add('hidden');
-            liveView.classList.remove('hidden');
-            startPreviewLoop();
-            updateHeight();
         });
 
         // --- Height management ---

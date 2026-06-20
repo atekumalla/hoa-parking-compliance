@@ -12,7 +12,7 @@ from datetime import datetime
 from io import BytesIO
 from typing import Tuple, Optional, List, Dict
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 # Register HEIC support with Pillow (iOS default photo format)
 try:
@@ -116,8 +116,13 @@ class DriveManager:
 
     @staticmethod
     def convert_to_jpg(image_bytes: bytes) -> bytes:
-        """Convert image to JPG format."""
+        """Convert image to JPG format, preserving EXIF orientation."""
         image = Image.open(BytesIO(image_bytes))
+
+        # Bake EXIF orientation into pixel data before re-encoding
+        # (re-saving as JPEG strips the EXIF orientation tag, so without
+        # this the image would appear rotated on viewers like Google Drive)
+        image = ImageOps.exif_transpose(image)
 
         if image.mode in ('RGBA', 'LA', 'P'):
             background = Image.new('RGB', image.size, (255, 255, 255))
