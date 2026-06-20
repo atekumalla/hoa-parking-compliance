@@ -59,6 +59,27 @@ class SheetsManager:
         self.spreadsheet = self.client.open_by_key(self.sheet_id)
     
     @staticmethod
+    def _clean_str(val) -> str:
+        """
+        Convert a cell value to a clean string.
+
+        Handles the case where Google Sheets auto-converts plates like
+        '27505E3' to the number 27505000 (scientific notation).  When
+        read back as a float (27505000.0), naive str() gives '27505000.0'.
+        This method strips the trailing '.0' for whole-number floats.
+        """
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return ''
+        if isinstance(val, float):
+            # 27505000.0 → '27505000' (remove .0 for integers stored as float)
+            if val == int(val):
+                return str(int(val))
+            return str(val)
+        if isinstance(val, int):
+            return str(val)
+        return str(val)
+
+    @staticmethod
     def get_month_tab_name(date: datetime = None) -> str:
         """
         Get the tab name for a given month.
@@ -198,15 +219,17 @@ class SheetsManager:
         for tab_name in tab_names:
             try:
                 worksheet = self.spreadsheet.worksheet(tab_name)
-                records = worksheet.get_all_records()
+                # numericise_ignore=['all'] prevents gspread from converting
+                # strings like "27505E3" into numbers (27505000).  We parse
+                # numeric columns ourselves where needed.
+                records = worksheet.get_all_records(numericise_ignore=['all'])
                 
                 if records:
                     df = pd.DataFrame(records)
-                    # Ensure text columns are strings — Google Sheets may
-                    # auto-convert values like "27505E5" to numbers
+                    # Ensure text columns are clean strings
                     for col in ['License Plate', 'Tag Number', 'Make', 'Model']:
                         if col in df.columns:
-                            df[col] = df[col].fillna('').astype(str)
+                            df[col] = df[col].apply(self._clean_str)
                     all_data.append(df)
                     
             except gspread.WorksheetNotFound:

@@ -449,8 +449,8 @@ def add_vehicle_entry_form():
                     if (c && c.video) {
                         if (typeof c.video === 'boolean') c.video = {};
                         c.video.facingMode = { ideal: 'environment' };
-                        if (!c.video.width)  c.video.width  = { ideal: 1920 };
-                        if (!c.video.height) c.video.height = { ideal: 1080 };
+                        if (!c.video.width)  c.video.width  = { ideal: 1080 };
+                        if (!c.video.height) c.video.height = { ideal: 1920 };
                     }
                     return orig(c);
                 };

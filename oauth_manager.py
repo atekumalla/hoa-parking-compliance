@@ -5,12 +5,15 @@ Handles per-user Google OAuth2 authentication flow within Streamlit.
 Each user signs in with their own Google account to enable photo uploads
 to Google Drive (uploads count against the authenticating user's quota).
 
-Tokens are stored in Streamlit session state, which is per-browser-session.
-Each user/browser gets an independent login. Tokens are lost when the
-browser tab is closed or the server restarts — users simply re-authenticate.
+Tokens are persisted to disk keyed by a random session ID that is stored
+in the URL query params (?sid=...).  Each browser keeps its own session ID,
+so multiple users get independent logins.  Tokens survive page refreshes
+and are only lost on server redeploy or explicit sign-out.
 """
 
+import json
 import os
+import uuid
 import urllib.parse
 from typing import Optional
 
@@ -25,6 +28,76 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 # Google OAuth endpoints
 AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/auth'
 TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
+
+# Directory to store per-session token files
+_TOKEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.oauth_sessions')
+
+
+def _ensure_token_dir():
+    """Create the token directory if it doesn't exist."""
+    os.makedirs(_TOKEN_DIR, exist_ok=True)
+
+
+def _save_session_token(session_id: str, creds: Credentials):
+    """Save OAuth credentials to disk keyed by session_id."""
+    _ensure_token_dir()
+    path = os.path.join(_TOKEN_DIR, f"{session_id}.json")
+    try:
+        data = {
+            'token': creds.token,
+            'refresh_token': creds.refresh_token,
+            'token_uri': creds.token_uri,
+            'client_id': creds.client_id,
+            'client_secret': creds.client_secret,
+            'scopes': list(creds.scopes) if creds.scopes else list(SCOPES),
+        }
+        with open(path, 'w') as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def _load_session_token(session_id: str) -> Optional[Credentials]:
+    """Load OAuth credentials from disk for a given session_id."""
+    path = os.path.join(_TOKEN_DIR, f"{session_id}.json")
+    try:
+        if not os.path.exists(path):
+            return None
+        with open(path, 'r') as f:
+            data = json.load(f)
+        if not data.get('refresh_token'):
+            return None
+        creds = Credentials(
+            token=data.get('token'),
+            refresh_token=data['refresh_token'],
+            token_uri=data.get('token_uri', TOKEN_ENDPOINT),
+            client_id=data.get('client_id'),
+            client_secret=data.get('client_secret'),
+            scopes=data.get('scopes', SCOPES),
+        )
+        # Refresh if expired
+        if creds.expired or not creds.token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            _save_session_token(session_id, creds)
+        return creds
+    except Exception:
+        # Corrupt or expired — remove the file
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        return None
+
+
+def _delete_session_token(session_id: str):
+    """Remove the session token file from disk."""
+    path = os.path.join(_TOKEN_DIR, f"{session_id}.json")
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
 
 
 def get_oauth_config() -> Optional[dict]:
@@ -127,6 +200,11 @@ def exchange_code_for_credentials(code: str) -> Optional[Credentials]:
             scopes=SCOPES,
         )
 
+        # Generate a unique session ID and persist token to disk
+        session_id = str(uuid.uuid4())
+        _save_session_token(session_id, creds)
+        st.session_state['oauth_session_id'] = session_id
+
         return creds
 
     except Exception as e:
@@ -136,16 +214,29 @@ def exchange_code_for_credentials(code: str) -> Optional[Credentials]:
 
 def get_user_credentials() -> Optional[Credentials]:
     """
-    Get the current user's OAuth credentials from session state.
+    Get the current user's OAuth credentials.
 
-    Each browser session maintains its own independent credentials.
+    Checks session state first, then tries to restore from disk using
+    the session ID in the URL query params (survives page refresh).
 
     Returns:
         Credentials object if authenticated, None otherwise.
     """
     creds = st.session_state.get('oauth_credentials')
 
+    # If not in memory, try restoring from disk via URL session key
     if creds is None:
+        sid = st.session_state.get('oauth_session_id') or st.query_params.get('sid')
+        if sid:
+            creds = _load_session_token(sid)
+            if creds:
+                st.session_state['oauth_credentials'] = creds
+                st.session_state['oauth_session_id'] = sid
+                st.session_state['oauth_user_authenticated'] = True
+                return creds
+            else:
+                # Token file gone or expired — clean up
+                st.session_state.pop('oauth_session_id', None)
         return None
 
     # Check if credentials are expired and refresh if possible
@@ -154,9 +245,17 @@ def get_user_credentials() -> Optional[Credentials]:
             from google.auth.transport.requests import Request
             creds.refresh(Request())
             st.session_state['oauth_credentials'] = creds
+            # Persist refreshed token
+            sid = st.session_state.get('oauth_session_id')
+            if sid:
+                _save_session_token(sid, creds)
         except Exception:
             # Refresh failed — user needs to re-authenticate
+            sid = st.session_state.get('oauth_session_id')
+            if sid:
+                _delete_session_token(sid)
             st.session_state.pop('oauth_credentials', None)
+            st.session_state.pop('oauth_session_id', None)
             st.session_state.pop('oauth_user_authenticated', None)
             return None
 
@@ -174,6 +273,8 @@ def handle_oauth_callback():
 
     Should be called early in the app lifecycle. If a code is present,
     it exchanges it for credentials and stores them in session state.
+    After auth, the session ID is persisted in the URL so that a page
+    refresh can restore the credentials from disk.
     """
     params = st.query_params
     code = params.get('code')
@@ -183,8 +284,18 @@ def handle_oauth_callback():
         if creds:
             st.session_state['oauth_credentials'] = creds
             st.session_state['oauth_user_authenticated'] = True
-        # Clear the code from URL to prevent re-processing
-        st.query_params.clear()
+        # Replace code param with sid so credentials survive refresh
+        sid = st.session_state.get('oauth_session_id')
+        if sid:
+            st.query_params.clear()
+            st.query_params['sid'] = sid
+        else:
+            st.query_params.clear()
+    else:
+        # On normal loads, ensure sid stays in URL if we have one
+        sid = st.session_state.get('oauth_session_id')
+        if sid and params.get('sid') != sid:
+            st.query_params['sid'] = sid
 
 
 def show_auth_ui():
@@ -203,8 +314,13 @@ def show_auth_ui():
     if is_user_authenticated():
         st.success("✅ Signed in to Google — photo uploads enabled")
         if st.button("🚪 Sign out", key="oauth_signout"):
+            sid = st.session_state.get('oauth_session_id')
+            if sid:
+                _delete_session_token(sid)
             st.session_state.pop('oauth_credentials', None)
             st.session_state.pop('oauth_user_authenticated', None)
+            st.session_state.pop('oauth_session_id', None)
+            st.query_params.pop('sid', None)
             st.rerun()
     else:
         auth_url = get_authorization_url()
@@ -213,6 +329,10 @@ def show_auth_ui():
 
 
 def logout():
-    """Clear OAuth credentials from session state."""
+    """Clear OAuth credentials from session state and disk."""
+    sid = st.session_state.get('oauth_session_id')
+    if sid:
+        _delete_session_token(sid)
     st.session_state.pop('oauth_credentials', None)
     st.session_state.pop('oauth_user_authenticated', None)
+    st.session_state.pop('oauth_session_id', None)

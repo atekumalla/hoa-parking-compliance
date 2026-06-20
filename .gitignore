@@ -174,3 +174,4 @@ images
 
 # OAuth token persistence (contains user secrets)
 .oauth_tokens.json
+.oauth_sessions/
