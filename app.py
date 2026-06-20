@@ -469,6 +469,18 @@ def add_vehicle_entry_form():
         # top-right) on mobile to toggle between front and rear cameras.
         # No getUserMedia patch needed — that was causing 90° rotation bugs.
         st.caption("💡 Tap the 🔄 icon (top-right of viewfinder) to switch to the rear camera.")
+
+        # Fix live viewfinder rotation on mobile: the rear-camera sensor
+        # delivers landscape frames, so the <video> element appears rotated
+        # 90° CCW. This CSS rotates it back to portrait in the viewfinder.
+        st.markdown("""
+        <style>
+        [data-testid="stCameraInput"] video {
+            transform: rotate(90deg);
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
         camera_photo = st.camera_input(
             "Take a photo of the vehicle",
             key=f"camera_input_{st.session_state.get('photo_reset_counter', 0)}"
