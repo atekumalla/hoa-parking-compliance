@@ -436,9 +436,9 @@ def add_vehicle_entry_form():
     )
     
     if photo_source == "📷 Take Photo":
-        # Inject JS to prefer rear camera and request higher resolution.
-        # Streamlit's camera_input hardcodes facingMode:"user" (selfie);
-        # this overrides getUserMedia constraints in all accessible frames.
+        # Inject JS to prefer rear camera and CSS to allow portrait display.
+        # Streamlit's camera_input hardcodes facingMode:"user" (selfie) and
+        # sets width/height constraints that force landscape. We override both.
         components.html("""
         <script>
         (function() {
@@ -448,9 +448,11 @@ def add_vehicle_entry_form():
                 md.getUserMedia = function(c) {
                     if (c && c.video) {
                         if (typeof c.video === 'boolean') c.video = {};
-                        c.video.facingMode = { ideal: 'environment' };
-                        if (!c.video.width)  c.video.width  = { ideal: 1080 };
-                        if (!c.video.height) c.video.height = { ideal: 1920 };
+                        c.video.facingMode = { exact: 'environment' };
+                        // Remove width/height constraints so the browser uses
+                        // the device's natural orientation (portrait on phones).
+                        delete c.video.width;
+                        delete c.video.height;
                     }
                     return orig(c);
                 };
@@ -476,6 +478,23 @@ def add_vehicle_entry_form():
                         });
                     }); });
                 }).observe(p.document.body, {childList:true, subtree:true});
+            } catch(e){}
+
+            // Inject CSS into parent to let the video display in natural aspect ratio
+            try {
+                var style = p.document.createElement('style');
+                style.textContent = '\
+                    [data-testid="stCameraInput"] video { \
+                        object-fit: contain !important; \
+                        width: 100% !important; \
+                        height: auto !important; \
+                        max-height: 70vh !important; \
+                    } \
+                    [data-testid="stCameraInput"] > div { \
+                        aspect-ratio: auto !important; \
+                    } \
+                ';
+                p.document.head.appendChild(style);
             } catch(e){}
         })();
         </script>
