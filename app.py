@@ -5,7 +5,6 @@ A web application for tracking and enforcing HOA guest parking rules.
 """
 
 import os
-import html as html_mod
 from datetime import datetime
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -466,37 +465,30 @@ def add_vehicle_entry_form():
     )
     
     if photo_source == "📷 Take Photo":
-        st.caption("💡 Tap the 🔄 icon (top-right of viewfinder) to switch cameras.")
+        st.caption("💡 Use the 🔄 icon (top-right) to switch to rear camera.")
 
-        # Inject getUserMedia patch directly into the page DOM.
-        # components.html / st.html use sandboxed iframes that CANNOT access
-        # the parent's navigator, so we use an <img onerror> trick instead.
-        # The JS runs in the real page context and patches getUserMedia to:
-        #  1. Default to rear camera on every fresh camera open
-        #  2. Request high resolution (1920×1440 = 2.76 MP; portrait = 1440×1920)
-        # The _forceRear flag resets each Streamlit render so initial open
-        # always uses rear camera, but the toggle button still works.
-        _cam_js = (
-            "(function(){"
-            "if(!window._gumOrig){"
-            "window._gumOrig=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);"
-            "navigator.mediaDevices.getUserMedia=function(c){"
-            "if(c&&c.video){"
-            "if(c.video===true)c.video={};"
-            "if(typeof c.video==='object'){"
-            "if(window._forceRear){c.video.facingMode={ideal:'environment'};window._forceRear=false;}"
-            "c.video.width={ideal:1920};c.video.height={ideal:1440};"
-            "}}"
-            "return window._gumOrig(c);};"
-            "}"
-            "window._forceRear=true;"
-            "this.remove();"
-            "})();"
-        )
-        st.markdown(
-            f'<img src="x" onerror="{html_mod.escape(_cam_js, quote=True)}" style="display:none">',
-            unsafe_allow_html=True,
-        )
+        # Streamlit's st.camera_input has hard limitations on mobile:
+        #  - Always opens front camera (no API to change default)
+        #  - Shows a rotated preview after capture (can't fix internally)
+        #  - JS injection blocked by CSP / iframe sandbox
+        #
+        # Our workaround:
+        #  1. CSS: hide Streamlit's rotated preview (the <img> after capture)
+        #  2. CSS: rotate the live video feed 90° CW to correct viewfinder
+        #  3. Python: _fix_camera_orientation corrects the saved photo
+        #  4. Only show OUR corrected preview below the widget
+        st.markdown("""
+        <style>
+        /* Rotate live viewfinder to portrait (sensor delivers landscape) */
+        [data-testid="stCameraInput"] video {
+            transform: rotate(90deg);
+        }
+        /* Hide Streamlit's rotated captured preview — we show our own corrected one */
+        [data-testid="stCameraInput"] img {
+            display: none !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
         camera_photo = st.camera_input(
             "Take a photo of the vehicle",
