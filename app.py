@@ -436,9 +436,11 @@ def add_vehicle_entry_form():
     )
     
     if photo_source == "📷 Take Photo":
-        # Inject JS to prefer rear camera and CSS to allow portrait display.
-        # Streamlit's camera_input hardcodes facingMode:"user" (selfie) and
-        # sets width/height constraints that force landscape. We override both.
+        # Use st.camera_input (WebRTC) — this does NOT save to the phone's
+        # camera roll. The live preview may appear landscape due to how mobile
+        # browsers deliver the camera sensor stream, but the captured photo
+        # will be correctly oriented after EXIF transpose.
+        # We patch getUserMedia to prefer the rear camera.
         components.html("""
         <script>
         (function() {
@@ -448,9 +450,8 @@ def add_vehicle_entry_form():
                 md.getUserMedia = function(c) {
                     if (c && c.video) {
                         if (typeof c.video === 'boolean') c.video = {};
-                        c.video.facingMode = { exact: 'environment' };
-                        // Remove width/height constraints so the browser uses
-                        // the device's natural orientation (portrait on phones).
+                        c.video.facingMode = { ideal: 'environment' };
+                        // Remove fixed dimensions — let device choose orientation
                         delete c.video.width;
                         delete c.video.height;
                     }
@@ -458,47 +459,29 @@ def add_vehicle_entry_form():
                 };
                 md._rearCamPatched = true;
             }
-            // Patch this frame
-            if (navigator.mediaDevices) patchGUM(navigator.mediaDevices);
-            // Patch parent + sibling iframes (Streamlit same-origin)
             try {
                 var p = window.parent;
                 if (p.navigator.mediaDevices) patchGUM(p.navigator.mediaDevices);
                 p.document.querySelectorAll('iframe').forEach(function(f) {
-                    try { if (f.contentWindow) patchGUM(f.contentWindow.navigator.mediaDevices); } catch(e){}
+                    try { if (f.contentWindow && f.contentWindow.navigator.mediaDevices) patchGUM(f.contentWindow.navigator.mediaDevices); } catch(e){}
                 });
                 new MutationObserver(function(muts) {
                     muts.forEach(function(m) { m.addedNodes.forEach(function(n) {
-                        var frames = [];
-                        if (n.tagName === 'IFRAME') frames.push(n);
-                        else if (n.querySelectorAll) frames = Array.from(n.querySelectorAll('iframe'));
-                        frames.forEach(function(f) {
-                            var tp = function(){ try { if(f.contentWindow) patchGUM(f.contentWindow.navigator.mediaDevices); } catch(e){} };
-                            tp(); f.addEventListener('load', tp);
-                        });
+                        if (n.tagName === 'IFRAME' || (n.querySelectorAll)) {
+                            var frames = n.tagName === 'IFRAME' ? [n] : Array.from(n.querySelectorAll('iframe') || []);
+                            frames.forEach(function(f) {
+                                var patch = function(){ try { if(f.contentWindow) patchGUM(f.contentWindow.navigator.mediaDevices); } catch(e){} };
+                                patch(); f.addEventListener('load', patch);
+                            });
+                        }
                     }); });
                 }).observe(p.document.body, {childList:true, subtree:true});
-            } catch(e){}
-
-            // Inject CSS into parent to let the video display in natural aspect ratio
-            try {
-                var style = p.document.createElement('style');
-                style.textContent = '\
-                    [data-testid="stCameraInput"] video { \
-                        object-fit: contain !important; \
-                        width: 100% !important; \
-                        height: auto !important; \
-                        max-height: 70vh !important; \
-                    } \
-                    [data-testid="stCameraInput"] > div { \
-                        aspect-ratio: auto !important; \
-                    } \
-                ';
-                p.document.head.appendChild(style);
             } catch(e){}
         })();
         </script>
         """, height=0)
+        st.caption("💡 The live preview may appear landscape — this is normal. "
+                   "The captured photo will be correctly oriented.")
         camera_photo = st.camera_input(
             "Take a photo of the vehicle",
             key="camera_input"
