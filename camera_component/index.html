@@ -168,27 +168,32 @@
         }
 
         function scrollIntoFullView() {
+            // Try multiple methods to scroll the camera into view.
+            // Streamlit renders components in iframes inside a scrollable container.
+
+            // Method 1: Use frameElement (works for same-origin iframes)
             try {
-                // Scroll the capture button to the bottom of the parent viewport
-                // so both the camera preview and controls are visible
                 if (window.frameElement) {
-                    var frame = window.frameElement;
-                    var frameRect = frame.getBoundingClientRect();
-                    var parentViewH = window.parent.innerHeight;
-                    // We want captureBtn visible near the bottom of the viewport.
-                    // captureBtn is at a known offset inside the iframe.
-                    var btnOffset = captureBtn.offsetTop + captureBtn.offsetHeight + 30;
-                    // How far the parent needs to scroll so btnOffset aligns near viewport bottom
-                    var targetScrollTop = frame.offsetTop + btnOffset - parentViewH;
-                    var currentScroll = window.parent.scrollY || window.parent.pageYOffset;
-                    if (targetScrollTop > currentScroll) {
-                        window.parent.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+                    window.frameElement.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                    return;
+                }
+            } catch(e) {}
+
+            // Method 2: Find our iframe in the parent DOM and scroll it
+            try {
+                var iframes = window.parent.document.getElementsByTagName('iframe');
+                for (var i = 0; i < iframes.length; i++) {
+                    if (iframes[i].contentWindow === window) {
+                        iframes[i].scrollIntoView({ behavior: 'smooth', block: 'end' });
+                        return;
                     }
                 }
-            } catch(e) {
-                // Cross-origin fallback
-                captureBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
+            } catch(e) {}
+
+            // Method 3: Scroll the parent window to the bottom
+            try {
+                window.parent.scrollTo({ top: window.parent.document.body.scrollHeight, behavior: 'smooth' });
+            } catch(e) {}
         }
 
         function stopCamera() {
@@ -239,7 +244,8 @@
             // Scroll after the first frame renders so canvas has its final size
             if (scrollPending) {
                 scrollPending = false;
-                setTimeout(scrollIntoFullView, 200);
+                // Wait for setHeight to propagate to parent (150ms) + extra buffer
+                setTimeout(scrollIntoFullView, 500);
             }
 
             animFrame = requestAnimationFrame(drawPreview);
@@ -322,7 +328,9 @@
                     captureBtn.style.background = '#333';
                     captureBtn.style.opacity = '1';
                     captureBtn.disabled = false;
-                    status.innerHTML = '<span class="spinner"></span> Uploading — preview will appear below...';
+                    // Clear spinner — encoding + send is done, preview will appear on rerun
+                    status.textContent = '✅ Photo captured! Preview will appear below.';
+                    status.className = 'status';
                 } else {
                     // Failed — restore UI
                     captureBtn.textContent = '📷 Capture';
@@ -345,11 +353,6 @@
         window.addEventListener("message", function(event) {
             if (event.data && event.data.type === "streamlit:render") {
                 updateHeight();
-                // Streamlit re-rendered — if we were showing the upload spinner, clear it
-                if (captured) {
-                    status.textContent = '✅ Photo sent — see preview below.';
-                    status.className = 'status';
-                }
             }
         });
 
