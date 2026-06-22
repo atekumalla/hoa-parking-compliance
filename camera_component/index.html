@@ -96,6 +96,7 @@
         var facingMode = 'environment';
         var animFrame = null;
         var captured = false;
+        var scrollPending = false; // scroll after first video frame renders
         var video = document.getElementById('video');
         var liveCanvas = document.getElementById('liveCanvas');
         var captureCanvas = document.getElementById('captureCanvas');
@@ -162,22 +163,32 @@
             status.textContent = camLabel + ' camera active · ' + preset.label;
             status.className = 'status';
             startPreviewLoop();
-            // Auto-scroll so the full camera + capture button is visible
-            scrollIntoFullView();
+            // Defer scroll until the first video frame renders (sets canvas height)
+            scrollPending = true;
         }
 
         function scrollIntoFullView() {
-            setTimeout(function() {
-                try {
-                    // Scroll within parent frame so the bottom of this component is visible
-                    if (window.frameElement) {
-                        window.frameElement.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            try {
+                // Scroll the capture button to the bottom of the parent viewport
+                // so both the camera preview and controls are visible
+                if (window.frameElement) {
+                    var frame = window.frameElement;
+                    var frameRect = frame.getBoundingClientRect();
+                    var parentViewH = window.parent.innerHeight;
+                    // We want captureBtn visible near the bottom of the viewport.
+                    // captureBtn is at a known offset inside the iframe.
+                    var btnOffset = captureBtn.offsetTop + captureBtn.offsetHeight + 30;
+                    // How far the parent needs to scroll so btnOffset aligns near viewport bottom
+                    var targetScrollTop = frame.offsetTop + btnOffset - parentViewH;
+                    var currentScroll = window.parent.scrollY || window.parent.pageYOffset;
+                    if (targetScrollTop > currentScroll) {
+                        window.parent.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
                     }
-                } catch(e) {
-                    // Cross-origin fallback — scroll within own document
-                    captureBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
-            }, 300);
+            } catch(e) {
+                // Cross-origin fallback
+                captureBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
         }
 
         function stopCamera() {
@@ -223,6 +234,12 @@
                     updateHeight();
                 }
                 ctx.drawImage(video, 0, 0, vw, vh);
+            }
+
+            // Scroll after the first frame renders so canvas has its final size
+            if (scrollPending) {
+                scrollPending = false;
+                setTimeout(scrollIntoFullView, 200);
             }
 
             animFrame = requestAnimationFrame(drawPreview);
@@ -328,6 +345,11 @@
         window.addEventListener("message", function(event) {
             if (event.data && event.data.type === "streamlit:render") {
                 updateHeight();
+                // Streamlit re-rendered — if we were showing the upload spinner, clear it
+                if (captured) {
+                    status.textContent = '✅ Photo sent — see preview below.';
+                    status.className = 'status';
+                }
             }
         });
 
