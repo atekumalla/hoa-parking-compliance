@@ -28,6 +28,35 @@
         .flip-btn { background: #333; color: #fff; }
         .status { text-align: center; color: #888; font-size: 13px; padding: 4px 0; }
         .hidden { display: none !important; }
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 18px; height: 18px;
+            border: 3px solid #444;
+            border-top-color: #ff4b4b;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .status.loading { color: #ccc; font-size: 14px; padding: 10px 0; }
+        /* Resolution toggle */
+        .res-toggle {
+            display: flex; gap: 4px; padding: 8px 0 4px;
+            justify-content: center; align-items: center;
+        }
+        .res-toggle-label {
+            font-size: 12px; color: #888; margin-right: 6px;
+        }
+        .res-btn {
+            padding: 6px 14px; border: 1px solid #444; border-radius: 6px;
+            font-size: 12px; font-weight: 600; cursor: pointer;
+            background: #1a1a2e; color: #aaa; transition: all 0.15s;
+        }
+        .res-btn.active {
+            background: #ff4b4b; color: #fff; border-color: #ff4b4b;
+        }
     </style>
 </head>
 <body>
@@ -38,6 +67,12 @@
         <div class="controls">
             <button class="flip-btn" id="flipBtn">🔄 Flip</button>
             <button class="capture-btn" id="captureBtn">📷 Capture</button>
+        </div>
+        <div class="res-toggle" id="resToggles">
+            <span class="res-toggle-label">Quality:</span>
+            <button class="res-btn" data-level="min">Min</button>
+            <button class="res-btn active" data-level="mid">Mid</button>
+            <button class="res-btn" data-level="max">Max</button>
         </div>
         <div class="status" id="status">Starting rear camera...</div>
     </div>
@@ -68,15 +103,29 @@
         var flipBtn = document.getElementById('flipBtn');
         var status = document.getElementById('status');
 
+        // --- Resolution presets ---
+        // Min: 1920×1440 (2.8MP) — fastest capture & upload
+        // Mid: 3024×2268 (6.9MP) — balanced quality/speed
+        // Max: 4032×3024 (12MP) — full sensor, slowest
+        var resPresets = {
+            min: { w: 1920, h: 1440, quality: 0.80, label: '2.8MP' },
+            mid: { w: 3024, h: 2268, quality: 0.85, label: '6.9MP' },
+            max: { w: 4032, h: 3024, quality: 0.92, label: '12MP' }
+        };
+        var currentRes = 'mid'; // default
+
         // --- Camera ---
+        function getResPreset() { return resPresets[currentRes]; }
+
         function startCamera() {
             stopCamera();
+            var preset = getResPreset();
             // Use 'exact' to force the specific camera (not just a preference)
             navigator.mediaDevices.getUserMedia({
                 video: {
                     facingMode: { exact: facingMode },
-                    width: { ideal: 4032 },
-                    height: { ideal: 3024 }
+                    width: { ideal: preset.w },
+                    height: { ideal: preset.h }
                 },
                 audio: false
             }).then(onCameraReady).catch(function() {
@@ -84,14 +133,14 @@
                 navigator.mediaDevices.getUserMedia({
                     video: {
                         facingMode: { ideal: facingMode },
-                        width: { ideal: 4032 },
-                        height: { ideal: 3024 }
+                        width: { ideal: preset.w },
+                        height: { ideal: preset.h }
                     },
                     audio: false
                 }).then(onCameraReady).catch(function() {
                     // Last resort: any camera
                     navigator.mediaDevices.getUserMedia({
-                        video: { width: { ideal: 4032 }, height: { ideal: 3024 } },
+                        video: { width: { ideal: preset.w }, height: { ideal: preset.h } },
                         audio: false
                     }).then(onCameraReady).catch(function(err) {
                         status.textContent = '❌ Cannot access camera: ' + err.message;
@@ -108,10 +157,27 @@
             captureBtn.textContent = '📷 Capture';
             captureBtn.className = 'capture-btn';
             flipBtn.classList.remove('hidden');
-            status.textContent = facingMode === 'environment'
-                ? '📷 Rear camera active'
-                : '🤳 Front camera active';
+            var camLabel = facingMode === 'environment' ? '📷 Rear' : '🤳 Front';
+            var preset = getResPreset();
+            status.textContent = camLabel + ' camera active · ' + preset.label;
+            status.className = 'status';
             startPreviewLoop();
+            // Auto-scroll so the full camera + capture button is visible
+            scrollIntoFullView();
+        }
+
+        function scrollIntoFullView() {
+            setTimeout(function() {
+                try {
+                    // Scroll within parent frame so the bottom of this component is visible
+                    if (window.frameElement) {
+                        window.frameElement.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                    }
+                } catch(e) {
+                    // Cross-origin fallback — scroll within own document
+                    captureBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 300);
         }
 
         function stopCamera() {
@@ -185,7 +251,7 @@
                 ctx.drawImage(video, 0, 0, vw, vh);
             }
 
-            return captureCanvas.toDataURL('image/jpeg', 0.92);
+            return captureCanvas.toDataURL('image/jpeg', getResPreset().quality);
         }
 
         // --- UI Handlers ---
@@ -194,24 +260,62 @@
             startCamera();
         });
 
+        // Resolution toggle buttons
+        var resButtons = document.querySelectorAll('.res-btn');
+        resButtons.forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var level = btn.getAttribute('data-level');
+                if (level === currentRes) return;
+                currentRes = level;
+                resButtons.forEach(function(b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                // Restart camera with new resolution (only if not already captured)
+                if (!captured) {
+                    startCamera();
+                }
+            });
+        });
+
         captureBtn.addEventListener('click', function() {
             if (captured) {
                 // Retake: restart camera
                 startCamera();
                 return;
             }
-            var dataUrl = capturePhoto();
-            if (dataUrl) {
-                // Send photo, stop camera to save power
-                setValue(dataUrl);
-                stopCamera();
-                captured = true;
-                captureBtn.textContent = '🔄 Retake';
-                captureBtn.className = 'capture-btn';
-                captureBtn.style.background = '#333';
-                flipBtn.classList.add('hidden');
-                status.textContent = '✅ Photo captured! Scroll down to see preview.';
-            }
+
+            // Show loading state immediately
+            captureBtn.disabled = true;
+            captureBtn.textContent = '⏳ Processing...';
+            captureBtn.style.opacity = '0.6';
+            flipBtn.classList.add('hidden');
+            status.innerHTML = '<span class="spinner"></span> Encoding photo...';
+            status.className = 'status loading';
+
+            // Use setTimeout to allow the DOM to repaint before the heavy toDataURL call
+            setTimeout(function() {
+                var dataUrl = capturePhoto();
+                if (dataUrl) {
+                    status.innerHTML = '<span class="spinner"></span> Uploading to server...';
+                    // Send photo, stop camera to save power
+                    setValue(dataUrl);
+                    stopCamera();
+                    captured = true;
+                    captureBtn.textContent = '🔄 Retake';
+                    captureBtn.className = 'capture-btn';
+                    captureBtn.style.background = '#333';
+                    captureBtn.style.opacity = '1';
+                    captureBtn.disabled = false;
+                    status.innerHTML = '<span class="spinner"></span> Uploading — preview will appear below...';
+                } else {
+                    // Failed — restore UI
+                    captureBtn.textContent = '📷 Capture';
+                    captureBtn.style.opacity = '1';
+                    captureBtn.disabled = false;
+                    flipBtn.classList.remove('hidden');
+                    status.textContent = '❌ Capture failed — try again';
+                    status.className = 'status';
+                }
+            }, 50);
         });
 
         // --- Height management ---

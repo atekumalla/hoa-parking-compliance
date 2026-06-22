@@ -341,7 +341,7 @@ def _show_todays_entries():
 def _clear_entry_state():
     """Clear all prefill, photo, and pending entry state after a successful save."""
     for key in ['prefill_plate', 'prefill_tag', 'prefill_make',
-                'prefill_model', 'prefill_color',
+                'prefill_model',
                 'attached_photo_bytes', 'attached_photo_name',
                 'attached_photo_from_camera', 'ai_analysis_done',
                 'pending_duplicate_entry']:
@@ -474,7 +474,7 @@ def add_vehicle_entry_form():
     if photo_source == "📷 Take Photo":
         # Custom HTML/JS camera component — bypasses all st.camera_input limitations:
         #  ✓ Defaults to rear camera (facingMode: environment)
-        #  ✓ High resolution (1920×1440 ideal)
+        #  ✓ User-selectable resolution: Min (2.8MP), Mid (6.9MP), Max (12MP)
         #  ✓ Correct orientation (detects landscape stream → rotates to portrait)
         #  ✓ Built-in flip button and preview before confirming
         photo_data = _camera_capture(
@@ -535,8 +535,6 @@ def add_vehicle_entry_form():
                                 st.session_state['prefill_make'] = result.make
                             if result.model:
                                 st.session_state['prefill_model'] = result.model
-                            if result.color:
-                                st.session_state['prefill_color'] = result.color
                             
                             st.session_state['ai_analysis_done'] = True
                             st.rerun()
@@ -563,8 +561,6 @@ def add_vehicle_entry_form():
             detected_parts.append(f"**Make:** {st.session_state['prefill_make']}")
         if st.session_state.get('prefill_model'):
             detected_parts.append(f"**Model:** {st.session_state['prefill_model']}")
-        if st.session_state.get('prefill_color'):
-            detected_parts.append(f"**Color:** {st.session_state['prefill_color']}")
         if detected_parts:
             st.success("🤖 AI Detected: " + " | ".join(detected_parts))
     
@@ -627,7 +623,6 @@ def add_vehicle_entry_form():
                 help="License plate will be automatically normalized to uppercase"
             )
             make = st.text_input("Make", value=default_make)
-            color = st.text_input("Color", value=st.session_state.get('prefill_color', ''))
         
         with col2:
             tag_number = st.text_input("Tag Number*", value=default_tag)
