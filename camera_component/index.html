@@ -57,6 +57,25 @@
         .res-btn.active {
             background: #ff4b4b; color: #fff; border-color: #ff4b4b;
         }
+        /* Zoom slider */
+        .zoom-row {
+            display: flex; gap: 8px; padding: 6px 12px;
+            justify-content: center; align-items: center;
+        }
+        .zoom-row.hidden { display: none !important; }
+        .zoom-label {
+            font-size: 12px; color: #888; white-space: nowrap;
+        }
+        .zoom-slider {
+            -webkit-appearance: none; appearance: none;
+            width: 140px; height: 6px;
+            background: #333; border-radius: 3px; outline: none;
+        }
+        .zoom-slider::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 20px; height: 20px;
+            background: #ff4b4b; border-radius: 50%; cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -68,10 +87,14 @@
             <button class="flip-btn" id="flipBtn">🔄 Flip</button>
             <button class="capture-btn" id="captureBtn">📷 Capture</button>
         </div>
+        <div class="zoom-row hidden" id="zoomRow">
+            <span class="zoom-label">🔍 1×</span>
+            <input type="range" class="zoom-slider" id="zoomSlider" min="1" max="5" step="0.1" value="1">
+        </div>
         <div class="res-toggle" id="resToggles">
             <span class="res-toggle-label">Quality:</span>
-            <button class="res-btn" data-level="min">Min</button>
-            <button class="res-btn active" data-level="mid">Mid</button>
+            <button class="res-btn active" data-level="min">Min</button>
+            <button class="res-btn" data-level="mid">Mid</button>
             <button class="res-btn" data-level="max">Max</button>
         </div>
         <div class="status" id="status">Starting rear camera...</div>
@@ -113,7 +136,7 @@
             mid: { w: 3024, h: 2268, quality: 0.85, label: '6.9MP' },
             max: { w: 4032, h: 3024, quality: 0.92, label: '12MP' }
         };
-        var currentRes = 'mid'; // default
+        var currentRes = 'min'; // default
 
         // --- Camera ---
         function getResPreset() { return resPresets[currentRes]; }
@@ -162,10 +185,52 @@
             var preset = getResPreset();
             status.textContent = camLabel + ' camera active · ' + preset.label;
             status.className = 'status';
+            setupZoom(s);
             startPreviewLoop();
             // Defer scroll until the first video frame renders (sets canvas height)
             scrollPending = true;
         }
+
+        // --- Zoom ---
+        var zoomRow = document.getElementById('zoomRow');
+        var zoomSlider = document.getElementById('zoomSlider');
+        var zoomLabel = zoomRow.querySelector('.zoom-label');
+
+        function setupZoom(mediaStream) {
+            var track = mediaStream.getVideoTracks()[0];
+            if (!track) { zoomRow.classList.add('hidden'); return; }
+
+            var capabilities = track.getCapabilities ? track.getCapabilities() : {};
+            if (capabilities.zoom) {
+                var minZoom = capabilities.zoom.min || 1;
+                var maxZoom = capabilities.zoom.max || 1;
+                if (maxZoom > minZoom) {
+                    zoomSlider.min = minZoom;
+                    zoomSlider.max = maxZoom;
+                    zoomSlider.step = (maxZoom - minZoom) > 10 ? 0.5 : 0.1;
+                    // Read current zoom or default to min
+                    var settings = track.getSettings ? track.getSettings() : {};
+                    zoomSlider.value = settings.zoom || minZoom;
+                    zoomLabel.textContent = '🔍 ' + parseFloat(zoomSlider.value).toFixed(1) + '×';
+                    zoomRow.classList.remove('hidden');
+                    updateHeight();
+                    return;
+                }
+            }
+            // Zoom not supported — hide slider
+            zoomRow.classList.add('hidden');
+        }
+
+        zoomSlider.addEventListener('input', function() {
+            var val = parseFloat(zoomSlider.value);
+            zoomLabel.textContent = '🔍 ' + val.toFixed(1) + '×';
+            if (stream) {
+                var track = stream.getVideoTracks()[0];
+                if (track && track.applyConstraints) {
+                    track.applyConstraints({ advanced: [{ zoom: val }] }).catch(function() {});
+                }
+            }
+        });
 
         function scrollIntoFullView() {
             // Try multiple methods to scroll the camera into view.
