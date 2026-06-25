@@ -1211,7 +1211,7 @@ def show_vehicle_history():
                 
                 # Convert Photo URL to clickable links
                 display_df['Photo URL'] = display_df['Photo URL'].apply(
-                    lambda x: f"[View Photo]({x})" if x and x != '' else "No photo"
+                    lambda x: x if x and x != '' else None
                 )
                 
                 st.dataframe(
@@ -1219,7 +1219,10 @@ def show_vehicle_history():
                     use_container_width=True,
                     column_config={
                         "Timestamp": st.column_config.DatetimeColumn("Date/Time"),
-                        "Photo URL": st.column_config.LinkColumn("Photo")
+                        "Photo URL": st.column_config.LinkColumn(
+                            "Photo",
+                            display_text="View Photo"
+                        )
                     }
                 )
                 

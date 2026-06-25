@@ -8,7 +8,7 @@ to Google Drive (uploads count against the authenticating user's quota).
 Tokens are persisted to disk keyed by a random session ID that is stored
 in the URL query params (?sid=...).  Each browser keeps its own session ID,
 so multiple users get independent logins.  Tokens survive page refreshes
-and are only lost on server redeploy or explicit sign-out.
+and browser restarts (sid is also persisted to a browser cookie).
 """
 
 import json
@@ -19,6 +19,7 @@ from typing import Optional
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from google.oauth2.credentials import Credentials
 
 
@@ -98,6 +99,69 @@ def _delete_session_token(session_id: str):
             os.remove(path)
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Browser cookie helpers (persist sid across browser restarts)
+# ---------------------------------------------------------------------------
+
+_COOKIE_NAME = 'hoa_parking_sid'
+_COOKIE_MAX_AGE_DAYS = 30
+
+
+def _inject_set_cookie_js(session_id: str):
+    """Inject invisible JS to save the session ID as a browser cookie."""
+    js = f"""
+    <script>
+    (function() {{
+        var maxAge = {_COOKIE_MAX_AGE_DAYS} * 24 * 60 * 60;
+        document.cookie = "{_COOKIE_NAME}={session_id}; path=/; max-age=" + maxAge + "; SameSite=Lax";
+    }})();
+    </script>
+    """
+    components.html(js, height=0, width=0)
+
+
+def _inject_clear_cookie_js():
+    """Inject invisible JS to delete the session cookie."""
+    js = f"""
+    <script>
+    (function() {{
+        document.cookie = "{_COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax";
+    }})();
+    </script>
+    """
+    components.html(js, height=0, width=0)
+
+
+def _inject_restore_from_cookie_js():
+    """
+    Inject invisible JS that restores the session from a browser cookie.
+
+    If the URL doesn't already have ?sid= (or ?code= for OAuth callback),
+    but the browser cookie contains a saved sid, redirect to ?sid=<value>
+    so the server-side logic can restore credentials from disk.
+    """
+    js = f"""
+    <script>
+    (function() {{
+        var params = new URLSearchParams(window.parent.location.search);
+        // Don't interfere if sid or code already present
+        if (params.has('sid') || params.has('code')) return;
+
+        // Read cookie
+        var match = document.cookie.match(/(^|;\\s*){_COOKIE_NAME}=([^;]+)/);
+        if (match && match[2]) {{
+            var sid = match[2];
+            // Redirect parent to include ?sid=
+            var url = new URL(window.parent.location.href);
+            url.searchParams.set('sid', sid);
+            window.parent.location.replace(url.toString());
+        }}
+    }})();
+    </script>
+    """
+    components.html(js, height=0, width=0)
 
 
 def get_oauth_config() -> Optional[dict]:
@@ -273,8 +337,8 @@ def handle_oauth_callback():
 
     Should be called early in the app lifecycle. If a code is present,
     it exchanges it for credentials and stores them in session state.
-    After auth, the session ID is persisted in the URL so that a page
-    refresh can restore the credentials from disk.
+    After auth, the session ID is persisted in the URL and in a browser
+    cookie so that credentials survive page refreshes AND browser restarts.
     """
     params = st.query_params
     code = params.get('code')
@@ -289,6 +353,8 @@ def handle_oauth_callback():
         if sid:
             st.query_params.clear()
             st.query_params['sid'] = sid
+            # Persist sid to browser cookie for cross-restart survival
+            _inject_set_cookie_js(sid)
         else:
             st.query_params.clear()
     else:
@@ -296,6 +362,15 @@ def handle_oauth_callback():
         sid = st.session_state.get('oauth_session_id')
         if sid and params.get('sid') != sid:
             st.query_params['sid'] = sid
+            # Keep cookie in sync
+            _inject_set_cookie_js(sid)
+        elif sid:
+            # Already in URL, ensure cookie is set too
+            _inject_set_cookie_js(sid)
+        else:
+            # No active session — try to restore from browser cookie
+            # (handles browser restart where session_state is lost)
+            _inject_restore_from_cookie_js()
 
 
 def show_auth_ui():
@@ -321,6 +396,7 @@ def show_auth_ui():
             st.session_state.pop('oauth_user_authenticated', None)
             st.session_state.pop('oauth_session_id', None)
             st.query_params.pop('sid', None)
+            _inject_clear_cookie_js()
             st.rerun()
     else:
         auth_url = get_authorization_url()
@@ -329,10 +405,11 @@ def show_auth_ui():
 
 
 def logout():
-    """Clear OAuth credentials from session state and disk."""
+    """Clear OAuth credentials from session state, disk, and browser cookie."""
     sid = st.session_state.get('oauth_session_id')
     if sid:
         _delete_session_token(sid)
     st.session_state.pop('oauth_credentials', None)
     st.session_state.pop('oauth_user_authenticated', None)
     st.session_state.pop('oauth_session_id', None)
+    _inject_clear_cookie_js()
