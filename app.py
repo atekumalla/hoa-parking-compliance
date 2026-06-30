@@ -284,8 +284,10 @@ def _show_todays_entries():
     plates_for_delete = df_today.sort_values('Timestamp', ascending=False)['License Plate'].tolist()
     photo_urls_for_delete = df_today.sort_values('Timestamp', ascending=False)['Photo URL'].fillna('').tolist()
     
-    # Ensure all columns are strings to avoid Arrow serialization issues with mixed types
-    display_df = display_df.astype(str)
+    # Ensure non-numeric columns are strings to avoid Arrow serialization issues with mixed types
+    str_cols = [c for c in display_df.columns if c != 'Days (30d)']
+    display_df[str_cols] = display_df[str_cols].astype(str)
+    display_df['Days (30d)'] = pd.to_numeric(display_df['Days (30d)'], errors='coerce').fillna(0).astype(int)
     
     st.dataframe(
         display_df,
