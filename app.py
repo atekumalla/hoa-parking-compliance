@@ -732,7 +732,7 @@ def show_scoreboard():
                 Times_Used=('Timestamp', 'count'),
                 Unique_Days=('Timestamp', lambda x: x.dt.date.nunique()),
                 Last_Seen=('Timestamp', 'max'),
-                Plates_Used=('License Plate', lambda x: ', '.join(x.unique()[:3]) + ('...' if x.nunique() > 3 else ''))
+                Plates_Used=('License Plate', lambda x: ', '.join(x.unique()))
             ).reset_index()
             tag_counts = tag_counts.sort_values('Times_Used', ascending=False).head(10)
             tag_counts.columns = ['Tag Number', 'Times Used', 'Unique Days', 'Last Seen', 'Plates']
