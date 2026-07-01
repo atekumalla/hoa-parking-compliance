@@ -743,6 +743,30 @@ def show_scoreboard():
                 tag_counts,
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "Tag Number": st.column_config.TextColumn(
+                        "Tag Number",
+                        width="small",
+                    ),
+                    "Times Used": st.column_config.NumberColumn(
+                        "Times Used",
+                        width="small",
+                    ),
+                    "Unique Days": st.column_config.NumberColumn(
+                        "Unique Days",
+                        width="small",
+                    ),
+                    "Last Seen": st.column_config.TextColumn(
+                        "Last Seen",
+                        width="small",
+                    ),
+                    "Plates": st.column_config.TextColumn(
+                        "Plates",
+                        width="large",
+                        help="All license plates that have used this tag number",
+                    ),
+                },
+                height=400,
             )
         else:
             st.info("No data available for the last 90 days.")
@@ -1501,6 +1525,29 @@ def main():
         layout="wide",
         initial_sidebar_state="collapsed"
     )
+    
+    # Custom CSS for better mobile display and text wrapping in dataframes
+    st.markdown("""
+        <style>
+        /* Enable text wrapping in dataframe cells */
+        .stDataFrame div[data-testid="stDataFrameResizable"] div[data-testid="StyledDataFrameDataCell"] {
+            white-space: normal !important;
+            word-wrap: break-word !important;
+        }
+        
+        /* Ensure dataframe columns can expand */
+        .stDataFrame {
+            overflow-x: auto !important;
+        }
+        
+        /* Better mobile responsiveness for tables */
+        @media (max-width: 768px) {
+            .stDataFrame div[data-testid="stDataFrameResizable"] {
+                font-size: 12px;
+            }
+        }
+        </style>
+    """, unsafe_allow_html=True)
     
     # Handle OAuth callback (must be early, before any other rendering)
     handle_oauth_callback()
