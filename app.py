@@ -739,35 +739,77 @@ def show_scoreboard():
             tag_counts['Last Seen'] = tag_counts['Last Seen'].dt.strftime('%Y-%m-%d')
             tag_counts = tag_counts.reset_index(drop=True)
             
-            st.dataframe(
-                tag_counts,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Tag Number": st.column_config.TextColumn(
-                        "Tag Number",
-                        width="small",
-                    ),
-                    "Times Used": st.column_config.NumberColumn(
-                        "Times Used",
-                        width="small",
-                    ),
-                    "Unique Days": st.column_config.NumberColumn(
-                        "Unique Days",
-                        width="small",
-                    ),
-                    "Last Seen": st.column_config.TextColumn(
-                        "Last Seen",
-                        width="small",
-                    ),
-                    "Plates": st.column_config.TextColumn(
-                        "Plates",
-                        width="large",
-                        help="All license plates that have used this tag number",
-                    ),
-                },
-                height=400,
-            )
+            # Create HTML table with better mobile wrapping
+            html_table = """
+            <style>
+                .tag-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                    font-size: 14px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                .tag-table thead tr {
+                    background-color: #f0f2f6;
+                    text-align: left;
+                }
+                .tag-table th,
+                .tag-table td {
+                    padding: 12px 8px;
+                    border: 1px solid #ddd;
+                }
+                .tag-table tbody tr:hover {
+                    background-color: #f5f5f5;
+                }
+                .tag-table td:last-child {
+                    word-wrap: break-word;
+                    word-break: break-word;
+                    white-space: pre-wrap;
+                    max-width: 300px;
+                }
+                @media (max-width: 768px) {
+                    .tag-table {
+                        font-size: 11px;
+                    }
+                    .tag-table th,
+                    .tag-table td {
+                        padding: 8px 4px;
+                    }
+                    .tag-table td:last-child {
+                        max-width: 150px;
+                    }
+                }
+            </style>
+            <table class="tag-table">
+                <thead>
+                    <tr>
+                        <th>Tag Number</th>
+                        <th>Times Used</th>
+                        <th>Unique Days</th>
+                        <th>Last Seen</th>
+                        <th>Plates</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
+            
+            for _, row in tag_counts.iterrows():
+                html_table += f"""
+                    <tr>
+                        <td>{row['Tag Number']}</td>
+                        <td>{row['Times Used']}</td>
+                        <td>{row['Unique Days']}</td>
+                        <td>{row['Last Seen']}</td>
+                        <td>{row['Plates']}</td>
+                    </tr>
+                """
+            
+            html_table += """
+                </tbody>
+            </table>
+            """
+            
+            st.markdown(html_table, unsafe_allow_html=True)
         else:
             st.info("No data available for the last 90 days.")
     except Exception as e:
@@ -1529,21 +1571,44 @@ def main():
     # Custom CSS for better mobile display and text wrapping in dataframes
     st.markdown("""
         <style>
-        /* Enable text wrapping in dataframe cells */
-        .stDataFrame div[data-testid="stDataFrameResizable"] div[data-testid="StyledDataFrameDataCell"] {
-            white-space: normal !important;
+        /* Enable text wrapping in all dataframe cells - multiple selectors for compatibility */
+        .stDataFrame [data-testid="StyledDataFrameDataCell"],
+        .stDataFrame [data-testid="stDataFrameDataCell"],
+        .stDataFrame div[role="gridcell"],
+        .stDataFrame td,
+        .stDataFrame .dataframe td {
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            max-width: none !important;
+        }
+        
+        /* Also apply to header cells */
+        .stDataFrame [data-testid="StyledDataFrameHeaderCell"],
+        .stDataFrame th {
+            white-space: pre-wrap !important;
             word-wrap: break-word !important;
         }
         
         /* Ensure dataframe columns can expand */
-        .stDataFrame {
+        .stDataFrame,
+        .stDataFrame > div,
+        .stDataFrame [data-testid="stDataFrameResizable"] {
             overflow-x: auto !important;
+            width: 100% !important;
         }
         
         /* Better mobile responsiveness for tables */
         @media (max-width: 768px) {
-            .stDataFrame div[data-testid="stDataFrameResizable"] {
-                font-size: 12px;
+            .stDataFrame {
+                font-size: 11px !important;
+            }
+            
+            .stDataFrame [data-testid="StyledDataFrameDataCell"],
+            .stDataFrame td {
+                padding: 8px 4px !important;
+                line-height: 1.4 !important;
             }
         }
         </style>
