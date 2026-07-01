@@ -739,77 +739,35 @@ def show_scoreboard():
             tag_counts['Last Seen'] = tag_counts['Last Seen'].dt.strftime('%Y-%m-%d')
             tag_counts = tag_counts.reset_index(drop=True)
             
-            # Create HTML table with better mobile wrapping
-            html_table = """
-            <style>
-                .tag-table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin: 20px 0;
-                    font-size: 14px;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                }
-                .tag-table thead tr {
-                    background-color: #f0f2f6;
-                    text-align: left;
-                }
-                .tag-table th,
-                .tag-table td {
-                    padding: 12px 8px;
-                    border: 1px solid #ddd;
-                }
-                .tag-table tbody tr:hover {
-                    background-color: #f5f5f5;
-                }
-                .tag-table td:last-child {
-                    word-wrap: break-word;
-                    word-break: break-word;
-                    white-space: pre-wrap;
-                    max-width: 300px;
-                }
-                @media (max-width: 768px) {
-                    .tag-table {
-                        font-size: 11px;
-                    }
-                    .tag-table th,
-                    .tag-table td {
-                        padding: 8px 4px;
-                    }
-                    .tag-table td:last-child {
-                        max-width: 150px;
-                    }
-                }
-            </style>
-            <table class="tag-table">
-                <thead>
-                    <tr>
-                        <th>Tag Number</th>
-                        <th>Times Used</th>
-                        <th>Unique Days</th>
-                        <th>Last Seen</th>
-                        <th>Plates</th>
-                    </tr>
-                </thead>
-                <tbody>
-            """
-            
-            for _, row in tag_counts.iterrows():
-                html_table += f"""
-                    <tr>
-                        <td>{row['Tag Number']}</td>
-                        <td>{row['Times Used']}</td>
-                        <td>{row['Unique Days']}</td>
-                        <td>{row['Last Seen']}</td>
-                        <td>{row['Plates']}</td>
-                    </tr>
-                """
-            
-            html_table += """
-                </tbody>
-            </table>
-            """
-            
-            st.markdown(html_table, unsafe_allow_html=True)
+            # Display using dataframe with configuration
+            st.dataframe(
+                tag_counts,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Tag Number": st.column_config.TextColumn(
+                        "Tag Number",
+                        width="small",
+                    ),
+                    "Times Used": st.column_config.NumberColumn(
+                        "Times Used",
+                        width="small",
+                    ),
+                    "Unique Days": st.column_config.NumberColumn(
+                        "Unique Days",
+                        width="small",
+                    ),
+                    "Last Seen": st.column_config.TextColumn(
+                        "Last Seen",
+                        width="small",
+                    ),
+                    "Plates": st.column_config.TextColumn(
+                        "Plates",
+                        width="large",
+                        help="All license plates that have used this tag number",
+                    ),
+                },
+            )
         else:
             st.info("No data available for the last 90 days.")
     except Exception as e:
@@ -1571,27 +1529,38 @@ def main():
     # Custom CSS for better mobile display and text wrapping in dataframes
     st.markdown("""
         <style>
-        /* Enable text wrapping in all dataframe cells - multiple selectors for compatibility */
-        .stDataFrame [data-testid="StyledDataFrameDataCell"],
-        .stDataFrame [data-testid="stDataFrameDataCell"],
+        /* Force text wrapping in dataframe cells - targeting all possible selectors */
+        [data-testid="stDataFrame"] div[data-testid="StyledDataFrameDataCell"],
+        [data-testid="stDataFrame"] div[data-testid="stDataFrameDataCell"],
+        [data-testid="stDataFrame"] [role="gridcell"],
+        [data-testid="stDataFrame"] td,
+        [data-testid="stDataFrame"] .dataframe td,
+        .stDataFrame div[data-testid="StyledDataFrameDataCell"],
+        .stDataFrame div[data-testid="stDataFrameDataCell"],
         .stDataFrame div[role="gridcell"],
         .stDataFrame td,
         .stDataFrame .dataframe td {
-            white-space: pre-wrap !important;
+            white-space: normal !important;
             word-wrap: break-word !important;
             word-break: break-word !important;
             overflow-wrap: break-word !important;
-            max-width: none !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
         }
         
-        /* Also apply to header cells */
-        .stDataFrame [data-testid="StyledDataFrameHeaderCell"],
-        .stDataFrame th {
+        /* Specifically target the last column (Plates) for extra wrapping */
+        [data-testid="stDataFrame"] [role="row"] [role="gridcell"]:last-child,
+        .stDataFrame tbody tr td:last-child {
             white-space: pre-wrap !important;
             word-wrap: break-word !important;
+            word-break: break-word !important;
+            min-width: 200px !important;
         }
         
-        /* Ensure dataframe columns can expand */
+        /* Ensure dataframe container allows content to expand */
+        [data-testid="stDataFrame"],
+        [data-testid="stDataFrame"] > div,
+        [data-testid="stDataFrame"] [data-testid="stDataFrameResizable"],
         .stDataFrame,
         .stDataFrame > div,
         .stDataFrame [data-testid="stDataFrameResizable"] {
@@ -1599,16 +1568,23 @@ def main():
             width: 100% !important;
         }
         
-        /* Better mobile responsiveness for tables */
+        /* Better mobile responsiveness */
         @media (max-width: 768px) {
+            [data-testid="stDataFrame"],
             .stDataFrame {
                 font-size: 11px !important;
             }
             
-            .stDataFrame [data-testid="StyledDataFrameDataCell"],
+            [data-testid="stDataFrame"] [role="gridcell"],
             .stDataFrame td {
                 padding: 8px 4px !important;
                 line-height: 1.4 !important;
+            }
+            
+            [data-testid="stDataFrame"] [role="row"] [role="gridcell"]:last-child,
+            .stDataFrame tbody tr td:last-child {
+                min-width: 150px !important;
+                max-width: 250px !important;
             }
         }
         </style>
