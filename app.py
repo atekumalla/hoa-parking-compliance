@@ -91,8 +91,20 @@ def initialize_app():
         st.stop()
 
 
-def load_data():
-    """Load data from Google Sheets into session state."""
+def load_data(force_refresh=False):
+    """Load data from Google Sheets into session state.
+    
+    Args:
+        force_refresh: If True, force reload even if data was recently loaded.
+    """
+    # Check if we recently loaded data (avoid excessive reloads)
+    last_load_time = st.session_state.get('data_last_loaded', None)
+    if not force_refresh and last_load_time is not None:
+        time_since_load = (datetime.now() - last_load_time).total_seconds()
+        # Don't reload if we loaded data less than 10 seconds ago
+        if time_since_load < 10:
+            return
+    
     with st.spinner("Loading data from Google Sheets..."):
         try:
             # Load 30-day rolling window data
@@ -105,6 +117,13 @@ def load_data():
             st.session_state.compliance_engine.build_warning_cache(st.session_state.historical_data)
             
             st.session_state.data_loaded = True
+            st.session_state.data_last_loaded = datetime.now()
+            
+            # Clear cached today's entries to force recalculation
+            pst = ZoneInfo("America/Los_Angeles")
+            today_pst = datetime.now(pst).date()
+            cache_key = f'todays_entries_{today_pst}'
+            st.session_state.pop(cache_key, None)
             
         except Exception as e:
             st.error(f"❌ Error loading data: {str(e)}")
@@ -129,44 +148,48 @@ def stamp_photo_with_timestamp(image_bytes: bytes) -> bytes:
     timestamp_text = now.strftime("%b %d, %Y %-I:%M:%S %p")
     
     img = Image.open(BytesIO(image_bytes))
-    img = ImageOps.exif_transpose(img)
-    
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
-    
-    draw = ImageDraw.Draw(img)
-    
-    # Scale font size based on image width (roughly 2.5% of width)
-    font_size = max(20, img.width // 40)
-    
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-    except (OSError, IOError):
+        img = ImageOps.exif_transpose(img)
+        
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        draw = ImageDraw.Draw(img)
+        
+        # Scale font size based on image width (roughly 2.5% of width)
+        font_size = max(20, img.width // 40)
+        
         try:
-            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
         except (OSError, IOError):
-            font = ImageFont.load_default()
-    
-    # Get text bounding box
-    bbox = draw.textbbox((0, 0), timestamp_text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    
-    # Position: bottom-right with padding
-    padding = max(10, img.width // 80)
-    x = img.width - text_width - padding
-    y = img.height - text_height - padding
-    
-    # Draw shadow for readability
-    draw.text((x + 2, y + 2), timestamp_text, fill=(0, 0, 0), font=font)
-    # Draw white text
-    draw.text((x, y), timestamp_text, fill=(255, 255, 255), font=font)
-    
-    # Save as JPG
-    output = BytesIO()
-    img.save(output, format='JPEG', quality=90)
-    output.seek(0)
-    return output.getvalue()
+            try:
+                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
+            except (OSError, IOError):
+                font = ImageFont.load_default()
+        
+        # Get text bounding box
+        bbox = draw.textbbox((0, 0), timestamp_text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        
+        # Position: bottom-right with padding
+        padding = max(10, img.width // 80)
+        x = img.width - text_width - padding
+        y = img.height - text_height - padding
+        
+        # Draw shadow for readability
+        draw.text((x + 2, y + 2), timestamp_text, fill=(0, 0, 0), font=font)
+        # Draw white text
+        draw.text((x, y), timestamp_text, fill=(255, 255, 255), font=font)
+        
+        # Save as JPG with optimization
+        output = BytesIO()
+        img.save(output, format='JPEG', quality=85, optimize=True)
+        output.seek(0)
+        return output.getvalue()
+    finally:
+        # Explicitly close the image to free memory
+        img.close()
 
 
 def _fix_camera_orientation(image_bytes: bytes) -> bytes:
@@ -182,18 +205,22 @@ def _fix_camera_orientation(image_bytes: bytes) -> bytes:
     Only applied to in-app camera captures — uploaded files are left untouched.
     """
     img = Image.open(BytesIO(image_bytes))
-    img = ImageOps.exif_transpose(img)          # honour any EXIF tag first
+    try:
+        img = ImageOps.exif_transpose(img)          # honour any EXIF tag first
 
-    if img.width > img.height:                  # landscape frame → rotate to portrait
-        img = img.transpose(Image.ROTATE_270)   # 90° clockwise
+        if img.width > img.height:                  # landscape frame → rotate to portrait
+            img = img.transpose(Image.ROTATE_270)   # 90° clockwise
 
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
 
-    buf = BytesIO()
-    img.save(buf, format='JPEG', quality=90)
-    buf.seek(0)
-    return buf.getvalue()
+        buf = BytesIO()
+        img.save(buf, format='JPEG', quality=85, optimize=True)
+        buf.seek(0)
+        return buf.getvalue()
+    finally:
+        # Explicitly close the image to free memory
+        img.close()
 
 
 def get_known_vehicles():
@@ -244,12 +271,18 @@ def _show_todays_entries():
     pst = ZoneInfo("America/Los_Angeles")
     today_pst = datetime.now(pst).date()
     
-    # Filter entries for today in PST
-    df = historical.copy()
-    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-    # Localize naive timestamps to PST
-    df['Timestamp_PST'] = df['Timestamp'].dt.tz_localize('America/Los_Angeles', ambiguous='NaT', nonexistent='shift_forward')
-    df_today = df[df['Timestamp_PST'].dt.date == today_pst]
+    # Cache today's entries to avoid recalculating on every render
+    cache_key = f'todays_entries_{today_pst}'
+    if cache_key in st.session_state:
+        df_today = st.session_state[cache_key]
+    else:
+        # Filter entries for today in PST
+        df = historical.copy()
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+        # Localize naive timestamps to PST
+        df['Timestamp_PST'] = df['Timestamp'].dt.tz_localize('America/Los_Angeles', ambiguous='NaT', nonexistent='shift_forward')
+        df_today = df[df['Timestamp_PST'].dt.date == today_pst]
+        st.session_state[cache_key] = df_today
     
     if df_today.empty:
         st.info("ℹ️ No entries have been added today yet.")
@@ -341,7 +374,9 @@ def _show_todays_entries():
 
 
 def _clear_entry_state():
-    """Clear all prefill, photo, and pending entry state after a successful save."""
+    """Clear all prefill, photo, and pending entry state after a successful save.
+    This helps free up memory by removing photo bytes from session state.
+    """
     for key in ['prefill_plate', 'prefill_tag', 'prefill_make',
                 'prefill_model',
                 'attached_photo_bytes', 'attached_photo_name',
@@ -372,19 +407,20 @@ def _process_and_save_entry(entry_data):
         warning_count += 1
         st.session_state.compliance_engine.increment_warning_count(normalized_plate)
 
-    # Handle photo upload
+    # Handle photo upload (if attached)
     photo_url = None
     upload_bytes = st.session_state.get('attached_photo_bytes')
     upload_name = st.session_state.get('attached_photo_name', 'photo.jpg')
 
     if upload_bytes is not None:
+        # Prepare photo (stamping if from camera)
         if st.session_state.get('attached_photo_from_camera'):
             try:
                 upload_bytes = stamp_photo_with_timestamp(upload_bytes)
             except Exception:
                 pass  # If stamping fails, upload original
 
-        with st.spinner("Uploading photo to Google Drive..."):
+        with st.spinner("Uploading photo..."):
             oauth_creds = get_user_credentials()
             success, url, error = st.session_state.drive_manager.upload_photo(
                 upload_bytes, normalized_plate, tag_number, upload_name,
@@ -392,13 +428,11 @@ def _process_and_save_entry(entry_data):
             )
             if success:
                 photo_url = url
-                st.success("✅ Photo uploaded successfully")
             else:
-                st.error(f"❌ Photo upload failed: {error}")
-                st.warning("Entry will be saved without photo.")
+                st.warning(f"⚠️ Photo upload failed: {error}. Entry will be saved without photo.")
 
     # Save to Google Sheets
-    with st.spinner("Saving entry..."):
+    with st.spinner("Saving to sheet..."):
         success = st.session_state.sheets_manager.append_entry(
             license_plate=normalized_plate,
             tag_number=tag_number,
@@ -413,8 +447,10 @@ def _process_and_save_entry(entry_data):
         )
 
         if success:
-            st.success(f"✅ Entry added successfully for {normalized_plate}")
+            st.success(f"✅ Entry saved for {normalized_plate}")
             _clear_entry_state()
+            # Don't reload data immediately - the throttling will prevent it anyway
+            # Just rerun to show the updated form
             load_data()
             st.rerun()
         else:
@@ -511,9 +547,13 @@ def add_vehicle_entry_form():
         col_preview, col_actions = st.columns([1, 1])
         with col_preview:
             pil_image = Image.open(BytesIO(st.session_state['attached_photo_bytes']))
-            pil_image = ImageOps.exif_transpose(pil_image)
-            caption = "📷 Camera photo" if st.session_state.get('attached_photo_from_camera') else "📁 Uploaded photo"
-            st.image(pil_image, caption=caption, use_container_width=True)
+            try:
+                pil_image = ImageOps.exif_transpose(pil_image)
+                caption = "📷 Camera photo" if st.session_state.get('attached_photo_from_camera') else "📁 Uploaded photo"
+                st.image(pil_image, caption=caption, use_container_width=True)
+            finally:
+                # Close the image to free memory
+                pil_image.close()
         with col_actions:
             # AI Analyze button (if OpenAI is configured)
             if is_recognition_available():
@@ -705,7 +745,7 @@ def show_scoreboard():
     
     with col2:
         if st.button("🔄 Refresh Data", use_container_width=True):
-            load_data()
+            load_data(force_refresh=True)
             st.rerun()
     
     if not st.session_state.get('data_loaded', False):
@@ -720,8 +760,18 @@ def show_scoreboard():
     st.markdown("### 🏷️ Top 10 Most Used Tags (Last 90 Days)")
     
     try:
-        tab_names_90 = st.session_state.sheets_manager.get_all_tabs_in_range(90)
-        data_90 = st.session_state.sheets_manager.read_data_from_tabs(tab_names_90)
+        # Cache 90-day data to avoid redundant loads (reuse if loaded within last 30 seconds)
+        data_90 = None
+        if 'data_90_cache' in st.session_state and 'data_90_cache_time' in st.session_state:
+            cache_age = (datetime.now() - st.session_state['data_90_cache_time']).total_seconds()
+            if cache_age < 30:
+                data_90 = st.session_state['data_90_cache']
+        
+        if data_90 is None:
+            tab_names_90 = st.session_state.sheets_manager.get_all_tabs_in_range(90)
+            data_90 = st.session_state.sheets_manager.read_data_from_tabs(tab_names_90)
+            st.session_state['data_90_cache'] = data_90
+            st.session_state['data_90_cache_time'] = datetime.now()
         
         if not data_90.empty:
             cutoff_90 = datetime.now() - pd.Timedelta(days=90)

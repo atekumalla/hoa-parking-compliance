@@ -118,25 +118,29 @@ class DriveManager:
     def convert_to_jpg(image_bytes: bytes) -> bytes:
         """Convert image to JPG format, preserving EXIF orientation."""
         image = Image.open(BytesIO(image_bytes))
+        
+        try:
+            # Bake EXIF orientation into pixel data before re-encoding
+            # (re-saving as JPEG strips the EXIF orientation tag, so without
+            # this the image would appear rotated on viewers like Google Drive)
+            image = ImageOps.exif_transpose(image)
 
-        # Bake EXIF orientation into pixel data before re-encoding
-        # (re-saving as JPEG strips the EXIF orientation tag, so without
-        # this the image would appear rotated on viewers like Google Drive)
-        image = ImageOps.exif_transpose(image)
+            if image.mode in ('RGBA', 'LA', 'P'):
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                if image.mode == 'P':
+                    image = image.convert('RGBA')
+                background.paste(image, mask=image.split()[-1] if image.mode in ('RGBA', 'LA') else None)
+                image = background
+            elif image.mode != 'RGB':
+                image = image.convert('RGB')
 
-        if image.mode in ('RGBA', 'LA', 'P'):
-            background = Image.new('RGB', image.size, (255, 255, 255))
-            if image.mode == 'P':
-                image = image.convert('RGBA')
-            background.paste(image, mask=image.split()[-1] if image.mode in ('RGBA', 'LA') else None)
-            image = background
-        elif image.mode != 'RGB':
-            image = image.convert('RGB')
-
-        output = BytesIO()
-        image.save(output, format='JPEG', quality=85, optimize=True)
-        output.seek(0)
-        return output.getvalue()
+            output = BytesIO()
+            image.save(output, format='JPEG', quality=85, optimize=True)
+            output.seek(0)
+            return output.getvalue()
+        finally:
+            # Explicitly close the image to free memory
+            image.close()
 
     def upload_photo(
         self,

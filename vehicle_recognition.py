@@ -50,20 +50,24 @@ def _prepare_image_for_api(image_bytes: bytes) -> bytes:
     license-plate readability.
     """
     img = Image.open(BytesIO(image_bytes))
-    img = ImageOps.exif_transpose(img)
+    try:
+        img = ImageOps.exif_transpose(img)
 
-    if img.mode in ("RGBA", "P"):
-        img = img.convert("RGB")
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
 
-    # Only downscale — never upscale a small image
-    w, h = img.size
-    if max(w, h) > _MAX_DIMENSION:
-        scale = _MAX_DIMENSION / max(w, h)
-        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        # Only downscale — never upscale a small image
+        w, h = img.size
+        if max(w, h) > _MAX_DIMENSION:
+            scale = _MAX_DIMENSION / max(w, h)
+            img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
 
-    buf = BytesIO()
-    img.save(buf, format="JPEG", quality=_JPEG_QUALITY)
-    return buf.getvalue()
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=_JPEG_QUALITY)
+        return buf.getvalue()
+    finally:
+        # Explicitly close the image to free memory
+        img.close()
 
 
 def analyze_vehicle_photo(image_bytes: bytes) -> VehicleInfo:
