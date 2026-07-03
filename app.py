@@ -324,7 +324,7 @@ def _show_todays_entries():
     
     st.dataframe(
         display_df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     st.caption(f"🕐 {len(display_df)} entr{'y' if len(display_df) == 1 else 'ies'} today — review before adding a new one.")
@@ -550,14 +550,14 @@ def add_vehicle_entry_form():
             try:
                 pil_image = ImageOps.exif_transpose(pil_image)
                 caption = "📷 Camera photo" if st.session_state.get('attached_photo_from_camera') else "📁 Uploaded photo"
-                st.image(pil_image, caption=caption, use_container_width=True)
+                st.image(pil_image, caption=caption, width="stretch")
             finally:
                 # Close the image to free memory
                 pil_image.close()
         with col_actions:
             # AI Analyze button (if OpenAI is configured)
             if is_recognition_available():
-                if st.button("🔍 Analyze with AI", type="primary", use_container_width=True):
+                if st.button("🔍 Analyze with AI", type="primary", width="stretch"):
                     with st.spinner("Analyzing vehicle photo with AI..."):
                         try:
                             result = analyze_vehicle_photo(st.session_state['attached_photo_bytes'])
@@ -584,7 +584,7 @@ def add_vehicle_entry_form():
                             st.error(f"❌ Analysis failed: {str(e)}")
             
             # Remove photo button
-            if st.button("❌ Remove photo", use_container_width=True):
+            if st.button("❌ Remove photo", width="stretch"):
                 for k in ['attached_photo_bytes', 'attached_photo_name',
                            'attached_photo_from_camera', 'ai_analysis_done']:
                     st.session_state.pop(k, None)
@@ -618,10 +618,10 @@ def add_vehicle_entry_form():
 
         col_add, col_skip = st.columns(2)
         with col_add:
-            if st.button("✅ Add Anyway", type="primary", use_container_width=True, key="dup_add"):
+            if st.button("✅ Add Anyway", type="primary", width="stretch", key="dup_add"):
                 _process_and_save_entry(entry)
         with col_skip:
-            if st.button("❌ Skip", use_container_width=True, key="dup_skip"):
+            if st.button("❌ Skip", width="stretch", key="dup_skip"):
                 _clear_entry_state()
                 st.rerun()
         return  # Don't render the form while waiting for confirmation
@@ -684,7 +684,7 @@ def add_vehicle_entry_form():
             st.info("📎 Photo attached — will be uploaded with this entry")
         
         # Submit button
-        submitted = st.form_submit_button("✅ Submit Entry", use_container_width=True)
+        submitted = st.form_submit_button("✅ Submit Entry", width="stretch")
         
         if submitted:
             # Validate required fields
@@ -744,7 +744,7 @@ def show_scoreboard():
     col1, col2 = st.columns([3, 1])
     
     with col2:
-        if st.button("🔄 Refresh Data", use_container_width=True):
+        if st.button("🔄 Refresh Data", width="stretch"):
             load_data(force_refresh=True)
             st.rerun()
     
@@ -792,7 +792,7 @@ def show_scoreboard():
             # Display using dataframe with configuration
             st.dataframe(
                 tag_counts,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "Tag Number": st.column_config.TextColumn(
@@ -881,7 +881,7 @@ def show_scoreboard():
                 styled = unwarned_df.style.apply(highlight_over_limit, axis=1)
                 st.dataframe(
                     styled,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
                 over_limit = unwarned_df[unwarned_df['Days (30d)'] > 9]
@@ -995,7 +995,7 @@ def show_scoreboard():
     
     with col_prev:
         if current_page > 0:
-            if st.button("← Previous 10", use_container_width=True, key="sb_prev"):
+            if st.button("← Previous 10", width="stretch", key="sb_prev"):
                 st.session_state['scoreboard_page'] = current_page - 1
                 st.rerun()
     
@@ -1007,7 +1007,7 @@ def show_scoreboard():
     
     with col_next:
         if end_idx < total_vehicles:
-            if st.button("Next 10 →", use_container_width=True, key="sb_next"):
+            if st.button("Next 10 →", width="stretch", key="sb_next"):
                 st.session_state['scoreboard_page'] = current_page + 1
                 st.rerun()
 
@@ -1048,10 +1048,10 @@ def show_quick_add_modal():
         col_submit, col_cancel = st.columns([1, 1])
         
         with col_submit:
-            submitted = st.form_submit_button("✅ Submit", use_container_width=True)
+            submitted = st.form_submit_button("✅ Submit", width="stretch")
         
         with col_cancel:
-            cancelled = st.form_submit_button("❌ Cancel", use_container_width=True)
+            cancelled = st.form_submit_button("❌ Cancel", width="stretch")
         
         if cancelled:
             st.session_state.show_quick_add = False
@@ -1201,7 +1201,7 @@ def show_vehicle_history():
     # Search button
     col_search, col_clear = st.columns([3, 1])
     with col_search:
-        if st.button("🔍 Search", type="primary", use_container_width=True):
+        if st.button("🔍 Search", type="primary", width="stretch"):
             if any([effective_plate, effective_tag, effective_make, effective_model]):
                 st.session_state['history_search'] = {
                     'plate': effective_plate,
@@ -1212,7 +1212,7 @@ def show_vehicle_history():
             else:
                 st.warning("Please enter at least one search field.")
     with col_clear:
-        if st.button("✕ Clear", use_container_width=True):
+        if st.button("✕ Clear", width="stretch"):
             st.session_state.pop('history_search', None)
             st.rerun()
     
@@ -1292,7 +1292,7 @@ def show_vehicle_history():
                 
                 st.dataframe(
                     display_df,
-                    use_container_width=True,
+                    width="stretch",
                     column_config={
                         "Timestamp": st.column_config.DatetimeColumn("Date/Time"),
                         "Photo URL": st.column_config.LinkColumn(
@@ -1399,7 +1399,7 @@ def show_storage_management():
         folder_df.columns = ['Month', 'Folder ID', 'Photos', 'Size']
         st.dataframe(
             folder_df[['Month', 'Photos', 'Size']],
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
         
