@@ -175,3 +175,10 @@ images
 # OAuth token persistence (contains user secrets)
 .oauth_tokens.json
 .oauth_sessions/
+# Documentation and test files (local reference only)
+MEMORY_OPTIMIZATION_REPORT.md
+PERFORMANCE_OPTIMIZATION_REPORT.md
+OPTIMIZATION_SUMMARY.md
+JPEG_QUALITY_EXPLAINED.md
+test_jpeg_quality.py
+test_q*.jpg
