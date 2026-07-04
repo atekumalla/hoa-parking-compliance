@@ -4,6 +4,7 @@ HOA Guest Parking Compliance Tracker - Main Streamlit Application
 A web application for tracking and enforcing HOA guest parking rules.
 """
 
+import gc
 import os
 import base64
 from datetime import datetime
@@ -11,7 +12,7 @@ from io import BytesIO
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import streamlit as st
-import streamlit.components.v1 as components
+from streamlit.components.v1 import declare_component
 import pandas as pd
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
@@ -43,7 +44,38 @@ SCOREBOARD_TOP_N = int(os.getenv('SCOREBOARD_TOP_N', '20'))
 
 # Custom camera component (replaces st.camera_input for proper mobile support)
 _CAMERA_COMPONENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_component")
-_camera_capture = components.declare_component("camera_capture", path=_CAMERA_COMPONENT_DIR)
+_camera_capture = declare_component("camera_capture", path=_CAMERA_COMPONENT_DIR)
+
+# --- Memory Management ---
+# Render free tier has limited RAM (512MB). Aggressively manage memory
+# to avoid heap corruption (exit code 134 / SIGABRT).
+_MAX_PHOTO_SESSION_BYTES = 800_000  # ~800KB max photo stored in session state
+
+
+def _compress_photo_for_session(raw_bytes: bytes) -> bytes:
+    """Compress a photo before storing in session state to reduce memory pressure."""
+    if len(raw_bytes) <= _MAX_PHOTO_SESSION_BYTES:
+        return raw_bytes
+    try:
+        img = Image.open(BytesIO(raw_bytes))
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        # Downscale to max 2048px on longest side
+        w, h = img.size
+        max_dim = 2048
+        if max(w, h) > max_dim:
+            scale = max_dim / max(w, h)
+            img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=80, optimize=True)
+        img.close()
+        result = buf.getvalue()
+        del buf
+        gc.collect()
+        return result
+    except Exception:
+        return raw_bytes
 
 
 def initialize_app():
@@ -190,6 +222,7 @@ def stamp_photo_with_timestamp(image_bytes: bytes) -> bytes:
     finally:
         # Explicitly close the image to free memory
         img.close()
+        gc.collect()
 
 
 def _fix_camera_orientation(image_bytes: bytes) -> bytes:
@@ -221,6 +254,7 @@ def _fix_camera_orientation(image_bytes: bytes) -> bytes:
     finally:
         # Explicitly close the image to free memory
         img.close()
+        gc.collect()
 
 
 def get_known_vehicles():
@@ -388,6 +422,8 @@ def _clear_entry_state():
     # and makes camera/upload widgets unresponsive until manually toggled.
     # Instead, the counter-based keys on the widgets force fresh instances.
     st.session_state['photo_reset_counter'] = st.session_state.get('photo_reset_counter', 0) + 1
+    # Explicit GC to reclaim memory freed by photo bytes deletion
+    gc.collect()
 
 
 def _process_and_save_entry(entry_data):
@@ -525,9 +561,12 @@ def add_vehicle_entry_form():
             try:
                 header, b64data = photo_data.split(",", 1)
                 raw_bytes = base64.b64decode(b64data)
-                st.session_state['attached_photo_bytes'] = raw_bytes
+                # Compress before storing to reduce session memory footprint
+                st.session_state['attached_photo_bytes'] = _compress_photo_for_session(raw_bytes)
                 st.session_state['attached_photo_name'] = 'camera_photo.jpg'
                 st.session_state['attached_photo_from_camera'] = True
+                del raw_bytes
+                gc.collect()
             except Exception as e:
                 st.error(f"❌ Failed to process captured photo: {e}")
     elif photo_source == "📁 Upload File":
@@ -538,9 +577,12 @@ def add_vehicle_entry_form():
             label_visibility="collapsed"
         )
         if uploaded_photo is not None:
-            st.session_state['attached_photo_bytes'] = uploaded_photo.getvalue()
+            raw_upload = uploaded_photo.getvalue()
+            st.session_state['attached_photo_bytes'] = _compress_photo_for_session(raw_upload)
             st.session_state['attached_photo_name'] = uploaded_photo.name
             st.session_state['attached_photo_from_camera'] = False
+            del raw_upload
+            gc.collect()
     
     # Show preview and actions when a photo is attached
     if st.session_state.get('attached_photo_bytes'):
