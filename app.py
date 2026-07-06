@@ -7,7 +7,10 @@ A web application for tracking and enforcing HOA guest parking rules.
 import gc
 import os
 import base64
-from datetime import datetime
+import logging
+import resource
+import sys
+from datetime import datetime, timedelta
 from io import BytesIO
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -15,6 +18,11 @@ import streamlit as st
 from streamlit.components.v1 import declare_component
 import pandas as pd
 from PIL import Image, ImageOps, ImageDraw, ImageFont
+
+# --- PIL Memory Safety ---
+# Prevent decompression bombs from consuming all RAM on the 512MB container.
+# iPhone 48MP images decompress to ~192MB; limit to ~30MP (~90MB pixel buffer).
+Image.MAX_IMAGE_PIXELS = 30_000_000  # ~30 megapixels
 
 # Register HEIC support with Pillow (iOS default photo format)
 try:
@@ -41,6 +49,61 @@ GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
 GOOGLE_CREDENTIALS_PATH = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 SCOREBOARD_TOP_N = int(os.getenv('SCOREBOARD_TOP_N', '20'))
+
+# --- Memory Debug Logging ---
+# Set MEMORY_DEBUG=1 in environment to enable memory usage logging.
+# Logs RSS (resident set size) at key points to help diagnose OOM on 512MB containers.
+_MEMORY_DEBUG = os.getenv('MEMORY_DEBUG', '0').strip().lower() in ('1', 'true', 'yes')
+
+_logger = logging.getLogger("hoa_parking")
+if _MEMORY_DEBUG:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        stream=sys.stderr,
+    )
+    _logger.setLevel(logging.DEBUG)
+else:
+    _logger.setLevel(logging.WARNING)
+
+
+def _log_memory(label: str):
+    """Log current process memory usage if MEMORY_DEBUG is enabled.
+    
+    Reports both current RSS and peak RSS to help identify memory spikes.
+    On Linux (Render), reads /proc/self/status for accurate current RSS.
+    On macOS (local dev), falls back to resource module (peak only).
+    """
+    if not _MEMORY_DEBUG:
+        return
+    try:
+        current_mb = None
+        peak_mb = None
+        # Linux: read current RSS from /proc (accurate, what Render uses)
+        if os.path.exists('/proc/self/status'):
+            with open('/proc/self/status') as f:
+                for line in f:
+                    if line.startswith('VmRSS:'):
+                        current_mb = int(line.split()[1]) / 1024  # kB → MB
+                    elif line.startswith('VmPeak:'):
+                        peak_mb = int(line.split()[1]) / 1024
+        # Fallback: resource module (peak RSS only)
+        if current_mb is None:
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            if sys.platform == 'darwin':
+                peak_mb = usage.ru_maxrss / (1024 * 1024)  # bytes → MB
+            else:
+                peak_mb = usage.ru_maxrss / 1024  # KB → MB
+        
+        parts = [f"[MEMORY] {label}:"]
+        if current_mb is not None:
+            parts.append(f"RSS={current_mb:.1f}MB")
+        if peak_mb is not None:
+            parts.append(f"Peak={peak_mb:.1f}MB")
+        _logger.debug(" ".join(parts))
+    except Exception:
+        pass  # Never crash due to memory logging
+
 
 # Custom camera component (replaces st.camera_input for proper mobile support)
 _CAMERA_COMPONENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_component")
@@ -113,11 +176,19 @@ def load_data(force_refresh=False):
     
     with st.spinner("Loading data from Google Sheets..."):
         try:
-            # Load 30-day rolling window data
-            st.session_state.rolling_data = st.session_state.sheets_manager.get_rolling_window_data(30)
-            
-            # Load all historical data
+            _log_memory("load_data:start")
+            # Load all historical data (single API round-trip)
             st.session_state.historical_data = st.session_state.sheets_manager.get_all_historical_data()
+            
+            # Derive 30-day rolling window from historical (avoids a duplicate API call
+            # and keeps only one large DataFrame in memory instead of two overlapping ones)
+            if not st.session_state.historical_data.empty:
+                cutoff_30 = datetime.now() - timedelta(days=30)
+                st.session_state.rolling_data = st.session_state.historical_data[
+                    st.session_state.historical_data['Timestamp'] >= cutoff_30
+                ].copy()
+            else:
+                st.session_state.rolling_data = pd.DataFrame(columns=st.session_state.sheets_manager.COLUMNS)
             
             # Build warning cache
             st.session_state.compliance_engine.build_warning_cache(st.session_state.historical_data)
@@ -125,11 +196,19 @@ def load_data(force_refresh=False):
             st.session_state.data_loaded = True
             st.session_state.data_last_loaded = datetime.now()
             
+            # Remove legacy cache keys that are no longer needed
+            st.session_state.pop('data_90_cache', None)
+            st.session_state.pop('data_90_cache_time', None)
+            
             # Clear cached today's entries to force recalculation
             pst = ZoneInfo("America/Los_Angeles")
             today_pst = datetime.now(pst).date()
             cache_key = f'todays_entries_{today_pst}'
             st.session_state.pop(cache_key, None)
+            
+            # Prompt garbage collection after loading large DataFrames
+            gc.collect()
+            _log_memory("load_data:end")
             
         except Exception as e:
             st.error(f"❌ Error loading data: {str(e)}")
@@ -149,6 +228,7 @@ def stamp_photo_with_timestamp(image_bytes: bytes) -> bytes:
     Returns:
         New image bytes with timestamp overlay (JPG).
     """
+    _log_memory("stamp_photo:start")
     pst = ZoneInfo("America/Los_Angeles")
     now = datetime.now(pst)
     timestamp_text = now.strftime("%b %d, %Y %-I:%M:%S %p")
@@ -197,6 +277,57 @@ def stamp_photo_with_timestamp(image_bytes: bytes) -> bytes:
         # Explicitly close the image to free memory
         img.close()
         gc.collect()
+
+
+_COMPRESS_THRESHOLD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _downscale_for_session(image_bytes: bytes, max_dim: int = 2048) -> bytes:
+    """
+    Downscale raw upload/capture bytes before storing in session state.
+
+    On a 512MB container, keeping a 10MB+ raw photo (especially HEIC which
+    decompresses to ~100-200MB of pixel data) in memory is the #1 OOM trigger.
+    This re-encodes to a reasonable JPEG immediately so session state holds
+    at most ~500KB-1MB instead.
+
+    Only applies compression if the raw bytes exceed 10 MB.  Photos that are
+    already small (e.g. taken in "Min" resolution mode on the camera component)
+    are returned unchanged to avoid unnecessary quality loss.
+
+    Args:
+        image_bytes: Raw bytes from camera or file upload.
+        max_dim: Maximum pixel dimension (longest side).
+
+    Returns:
+        Re-encoded JPEG bytes (or original if already small / on error).
+    """
+    # Skip compression for photos already under the threshold
+    if len(image_bytes) <= _COMPRESS_THRESHOLD_BYTES:
+        return image_bytes
+
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        try:
+            img = ImageOps.exif_transpose(img)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+
+            w, h = img.size
+            if max(w, h) > max_dim:
+                scale = max_dim / max(w, h)
+                img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=85, optimize=True)
+            buf.seek(0)
+            return buf.getvalue()
+        finally:
+            img.close()
+            gc.collect()
+    except Exception:
+        # If anything fails, return original bytes rather than crashing
+        return image_bytes
 
 
 def _fix_camera_orientation(image_bytes: bytes) -> bytes:
@@ -284,12 +415,11 @@ def _show_todays_entries():
     if cache_key in st.session_state:
         df_today = st.session_state[cache_key]
     else:
-        # Filter entries for today in PST
-        df = historical.copy()
-        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-        # Localize naive timestamps to PST
-        df['Timestamp_PST'] = df['Timestamp'].dt.tz_localize('America/Los_Angeles', ambiguous='NaT', nonexistent='shift_forward')
-        df_today = df[df['Timestamp_PST'].dt.date == today_pst]
+        # Filter entries for today in PST (avoid .copy() to save memory)
+        timestamps = pd.to_datetime(historical['Timestamp'])
+        timestamps_pst = timestamps.dt.tz_localize('America/Los_Angeles', ambiguous='NaT', nonexistent='shift_forward')
+        today_mask = timestamps_pst.dt.date == today_pst
+        df_today = historical[today_mask].assign(Timestamp=timestamps[today_mask])
         st.session_state[cache_key] = df_today
     
     if df_today.empty:
@@ -402,6 +532,7 @@ def _clear_entry_state():
 
 def _process_and_save_entry(entry_data):
     """Upload photo (if attached) and save a vehicle entry to Google Sheets."""
+    _log_memory("process_entry:start")
     normalized_plate = entry_data['normalized_plate']
     tag_number = entry_data['tag_number']
     make = entry_data['make']
@@ -440,6 +571,7 @@ def _process_and_save_entry(entry_data):
                 photo_url = url
             else:
                 st.warning(f"⚠️ Photo upload failed: {error}. Entry will be saved without photo.")
+        _log_memory("process_entry:after_photo_upload")
 
     # Save to Google Sheets
     with st.spinner("Saving to sheet..."):
@@ -459,9 +591,36 @@ def _process_and_save_entry(entry_data):
         if success:
             st.success(f"✅ Entry saved for {normalized_plate}")
             _clear_entry_state()
-            # Don't reload data immediately - the throttling will prevent it anyway
-            # Just rerun to show the updated form
-            load_data()
+
+            # Update in-memory DataFrames locally instead of re-fetching
+            # everything from Google Sheets (saves an API round-trip and
+            # avoids a memory spike from rebuilding all DataFrames).
+            pst = ZoneInfo("America/Los_Angeles")
+            new_row = pd.DataFrame([{
+                'Timestamp': pd.Timestamp(datetime.now(pst).strftime("%Y-%m-%d %H:%M:%S")),
+                'License Plate': normalized_plate,
+                'Tag Number': tag_number,
+                'Make': make,
+                'Model': model,
+                'Warned': 'Y' if warned else 'N',
+                'Warned Date': warned_date or '',
+                'Warning Count': warning_count,
+                'Towed': 'Y' if towed else 'N',
+                'Towed Date': towed_date or '',
+                'Photo URL': photo_url or ''
+            }])
+            st.session_state.historical_data = pd.concat(
+                [st.session_state.historical_data, new_row], ignore_index=True
+            )
+            # Also append to rolling_data (it's within last 30 days by definition)
+            st.session_state.rolling_data = pd.concat(
+                [st.session_state.rolling_data, new_row], ignore_index=True
+            )
+            # Invalidate today's entries cache so it recalculates
+            today_pst = datetime.now(pst).date()
+            st.session_state.pop(f'todays_entries_{today_pst}', None)
+
+            _log_memory("process_entry:end")
             st.rerun()
         else:
             st.error("❌ Failed to save entry to Google Sheets")
@@ -535,7 +694,9 @@ def add_vehicle_entry_form():
             try:
                 header, b64data = photo_data.split(",", 1)
                 raw_bytes = base64.b64decode(b64data)
-                st.session_state['attached_photo_bytes'] = raw_bytes
+                # Only compress if photo exceeds 10 MB (e.g. Max mode);
+                # Min/Mid mode photos are already small and skip this.
+                st.session_state['attached_photo_bytes'] = _downscale_for_session(raw_bytes)
                 st.session_state['attached_photo_name'] = 'camera_photo.jpg'
                 st.session_state['attached_photo_from_camera'] = True
             except Exception as e:
@@ -548,7 +709,9 @@ def add_vehicle_entry_form():
             label_visibility="collapsed"
         )
         if uploaded_photo is not None:
-            st.session_state['attached_photo_bytes'] = uploaded_photo.getvalue()
+            raw_bytes = uploaded_photo.getvalue()
+            # Only compress if photo exceeds 10 MB; small uploads pass through unchanged.
+            st.session_state['attached_photo_bytes'] = _downscale_for_session(raw_bytes)
             st.session_state['attached_photo_name'] = uploaded_photo.name
             st.session_state['attached_photo_from_camera'] = False
     
@@ -570,6 +733,7 @@ def add_vehicle_entry_form():
                 if st.button("🔍 Analyze with AI", type="primary", width="stretch"):
                     with st.spinner("Analyzing vehicle photo with AI..."):
                         try:
+                            _log_memory("ai_analyze:start")
                             result = analyze_vehicle_photo(st.session_state['attached_photo_bytes'])
                             
                             if result.license_plate:
@@ -589,6 +753,7 @@ def add_vehicle_entry_form():
                                 st.session_state['prefill_model'] = result.model
                             
                             st.session_state['ai_analysis_done'] = True
+                            _log_memory("ai_analyze:end")
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Analysis failed: {str(e)}")
@@ -726,14 +891,13 @@ def add_vehicle_entry_form():
             if not historical.empty:
                 pst = ZoneInfo("America/Los_Angeles")
                 today_pst = datetime.now(pst).date()
-                df = historical.copy()
-                df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-                df['Timestamp_PST'] = df['Timestamp'].dt.tz_localize(
+                timestamps = pd.to_datetime(historical['Timestamp'])
+                timestamps_pst = timestamps.dt.tz_localize(
                     'America/Los_Angeles', ambiguous='NaT', nonexistent='shift_forward'
                 )
-                today_matches = df[
-                    (df['Timestamp_PST'].dt.date == today_pst) &
-                    (df['License Plate'] == normalized_plate)
+                today_matches = historical[
+                    (timestamps_pst.dt.date == today_pst) &
+                    (historical['License Plate'] == normalized_plate)
                 ]
                 
                 if not today_matches.empty:
@@ -770,23 +934,16 @@ def show_scoreboard():
     st.markdown("### 🏷️ Top 10 Most Used Tags (Last 90 Days)")
     
     try:
-        # Cache 90-day data to avoid redundant loads (reuse if loaded within last 30 seconds)
-        data_90 = None
-        if 'data_90_cache' in st.session_state and 'data_90_cache_time' in st.session_state:
-            cache_age = (datetime.now() - st.session_state['data_90_cache_time']).total_seconds()
-            if cache_age < 30:
-                data_90 = st.session_state['data_90_cache']
-        
-        if data_90 is None:
-            tab_names_90 = st.session_state.sheets_manager.get_all_tabs_in_range(90)
-            data_90 = st.session_state.sheets_manager.read_data_from_tabs(tab_names_90)
-            st.session_state['data_90_cache'] = data_90
-            st.session_state['data_90_cache_time'] = datetime.now()
+        # Derive 90-day data from the already-loaded historical_data to avoid
+        # a duplicate Google Sheets fetch and extra DataFrame in memory.
+        historical = st.session_state.get('historical_data', pd.DataFrame())
+        if not historical.empty:
+            cutoff_90 = datetime.now() - pd.Timedelta(days=90)
+            data_90 = historical[historical['Timestamp'] >= cutoff_90]
+        else:
+            data_90 = pd.DataFrame()
         
         if not data_90.empty:
-            cutoff_90 = datetime.now() - pd.Timedelta(days=90)
-            data_90 = data_90[data_90['Timestamp'] >= cutoff_90]
-            
             tag_counts = data_90[data_90['Tag Number'].astype(str).str.strip() != '']
             tag_counts = tag_counts.groupby('Tag Number').agg(
                 Times_Used=('Timestamp', 'count'),
@@ -1117,7 +1274,31 @@ def show_quick_add_modal():
                 if success:
                     st.success(f"✅ Quick add successful for {vehicle['license_plate']}")
                     st.session_state.show_quick_add = False
-                    load_data()
+
+                    # Update in-memory DataFrames locally instead of re-fetching
+                    pst = ZoneInfo("America/Los_Angeles")
+                    new_row = pd.DataFrame([{
+                        'Timestamp': pd.Timestamp(datetime.now(pst).strftime("%Y-%m-%d %H:%M:%S")),
+                        'License Plate': vehicle['license_plate'],
+                        'Tag Number': vehicle['tag_number'],
+                        'Make': vehicle['make'],
+                        'Model': vehicle['model'],
+                        'Warned': 'Y' if warned else 'N',
+                        'Warned Date': warned_date or '',
+                        'Warning Count': warning_count,
+                        'Towed': 'Y' if towed else 'N',
+                        'Towed Date': towed_date or '',
+                        'Photo URL': photo_url or ''
+                    }])
+                    st.session_state.historical_data = pd.concat(
+                        [st.session_state.historical_data, new_row], ignore_index=True
+                    )
+                    st.session_state.rolling_data = pd.concat(
+                        [st.session_state.rolling_data, new_row], ignore_index=True
+                    )
+                    today_pst = datetime.now(pst).date()
+                    st.session_state.pop(f'todays_entries_{today_pst}', None)
+
                     st.rerun()
                 else:
                     st.error("❌ Failed to save entry")
@@ -1239,8 +1420,13 @@ def show_vehicle_history():
         effective_tag = search['tag']
         effective_make = search['make']
         effective_model = search['model']
-        with st.spinner("Searching..."):
-            all_data = st.session_state.sheets_manager.get_all_historical_data()
+        
+        # Use cached historical data instead of re-fetching (saves memory + API calls)
+        all_data = st.session_state.get('historical_data', pd.DataFrame())
+        if all_data.empty:
+            with st.spinner("Loading data..."):
+                load_data(force_refresh=True)
+                all_data = st.session_state.get('historical_data', pd.DataFrame())
         
         if all_data.empty:
             st.warning("No historical data available.")
@@ -1655,6 +1841,7 @@ def main():
     
     # Initialize app
     initialize_app()
+    _log_memory("main:after_init")
     
     # Load data on first run
     if 'data_loaded' not in st.session_state:
