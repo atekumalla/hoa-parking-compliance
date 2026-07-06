@@ -467,6 +467,29 @@ def _show_todays_entries():
     )
     st.caption(f"🕐 {len(display_df)} entr{'y' if len(display_df) == 1 else 'ies'} today — review before adding a new one.")
     
+    # Clickable plates and tags — navigate to Vehicle History on click
+    unique_plates = [p for p in display_df['License Plate'].unique() if p and p.strip() and p != 'nan']
+    unique_tags = [t for t in display_df['Tag Number'].unique() if t and t.strip() and t != 'nan']
+    
+    if unique_plates or unique_tags:
+        st.markdown("**🔗 Click to view history:**")
+        # Show plates as clickable buttons
+        if unique_plates:
+            plate_cols = st.columns(min(len(unique_plates), 4))
+            for i, plate in enumerate(unique_plates):
+                with plate_cols[i % min(len(unique_plates), 4)]:
+                    if st.button(f"🚗 {plate}", key=f"today_plate_{plate}"):
+                        st.session_state.search_plate_prefill = plate
+                        st.rerun()
+        # Show tags as clickable buttons
+        if unique_tags:
+            tag_cols = st.columns(min(len(unique_tags), 4))
+            for i, tag in enumerate(unique_tags):
+                with tag_cols[i % min(len(unique_tags), 4)]:
+                    if st.button(f"🏷️ Tag {tag}", key=f"today_tag_{tag}"):
+                        st.session_state.search_tag_prefill = tag
+                        st.rerun()
+    
     # Delete entry section
     with st.expander("🗑️ Delete an entry"):
         delete_options = []
@@ -1327,8 +1350,9 @@ def show_vehicle_history():
     
     st.markdown("Search by any field below. You can type to filter or pick from the dropdown.")
     
-    # Check if there's a prefill from scoreboard History button
+    # Check if there's a prefill from scoreboard History button or today's entries
     prefill_plate = st.session_state.get('search_plate_prefill', '')
+    prefill_tag = st.session_state.get('search_tag_prefill', '')
     
     col1, col2 = st.columns(2)
     
@@ -1351,8 +1375,12 @@ def show_vehicle_history():
     with col2:
         search_tag = st.text_input(
             "Tag Number (type full or partial)",
+            value=prefill_tag,
             help="Search by parking tag number"
         )
+        # Clear tag prefill after it's been used
+        if prefill_tag:
+            st.session_state.pop('search_tag_prefill', None)
         tag_dropdown = st.selectbox(
             "Or pick from known tags:",
             [""] + tag_options,
@@ -1389,28 +1417,47 @@ def show_vehicle_history():
     effective_make = search_make.strip() or make_dropdown
     effective_model = search_model.strip() or model_dropdown
     
+    # Date-based search
+    st.markdown("---")
+    st.markdown("**📅 Filter by Date** — pick a date to see all vehicles logged on that day")
+    date_col1, date_col2 = st.columns(2)
+    with date_col1:
+        search_date = st.date_input(
+            "Date",
+            value=None,
+            help="Filter results to a specific date. If only a date is selected with no other filters, all vehicles logged on that date will be shown."
+        )
+    with date_col2:
+        st.markdown("")  # spacer
+        st.caption("💡 Pick just a date (leave other fields empty) to see all vehicles logged that day.")
+    
     # Search button
     col_search, col_clear = st.columns([3, 1])
     with col_search:
         if st.button("🔍 Search", type="primary", width="stretch"):
-            if any([effective_plate, effective_tag, effective_make, effective_model]):
+            if any([effective_plate, effective_tag, effective_make, effective_model, search_date]):
                 st.session_state['history_search'] = {
                     'plate': effective_plate,
                     'tag': effective_tag,
                     'make': effective_make,
                     'model': effective_model,
+                    'date': search_date.isoformat() if search_date else '',
                 }
             else:
-                st.warning("Please enter at least one search field.")
+                st.warning("Please enter at least one search field or select a date.")
     with col_clear:
         if st.button("✕ Clear", width="stretch"):
             st.session_state.pop('history_search', None)
             st.rerun()
     
-    # Also auto-search when prefilled from scoreboard History button
+    # Also auto-search when prefilled from scoreboard History button or today's entries
     if prefill_plate and 'history_search' not in st.session_state:
         st.session_state['history_search'] = {
-            'plate': effective_plate, 'tag': '', 'make': '', 'model': ''
+            'plate': effective_plate, 'tag': '', 'make': '', 'model': '', 'date': ''
+        }
+    if prefill_tag and 'history_search' not in st.session_state:
+        st.session_state['history_search'] = {
+            'plate': '', 'tag': effective_tag, 'make': '', 'model': '', 'date': ''
         }
     
     # Show results if a search has been performed
@@ -1420,6 +1467,7 @@ def show_vehicle_history():
         effective_tag = search['tag']
         effective_make = search['make']
         effective_model = search['model']
+        effective_date = search.get('date', '')
         
         # Use cached historical data instead of re-fetching (saves memory + API calls)
         all_data = st.session_state.get('historical_data', pd.DataFrame())
@@ -1447,6 +1495,17 @@ def show_vehicle_history():
         
         if effective_model:
             mask &= all_data['Model'].str.contains(effective_model, case=False, na=False)
+        
+        if effective_date:
+            if isinstance(effective_date, str):
+                filter_date = datetime.strptime(effective_date, '%Y-%m-%d').date()
+            else:
+                filter_date = effective_date
+            # Compare timestamps (as dates in PST) with the selected date
+            pst = ZoneInfo("America/Los_Angeles")
+            timestamps = pd.to_datetime(all_data['Timestamp'])
+            timestamps_pst = timestamps.dt.tz_localize('America/Los_Angeles', ambiguous='NaT', nonexistent='shift_forward')
+            mask &= (timestamps_pst.dt.date == filter_date)
         
         history = all_data[mask].sort_values('Timestamp', ascending=False)
         
@@ -1868,10 +1927,12 @@ def main():
         show_quick_add_modal()
         return
     
-    # Handle history view from scoreboard
-    if st.session_state.get('search_plate_prefill'):
-        if st.button("← Back to Scoreboard"):
+    # Handle history view from scoreboard or today's entries
+    if st.session_state.get('search_plate_prefill') or st.session_state.get('search_tag_prefill'):
+        if st.button("← Back"):
             st.session_state.pop('search_plate_prefill', None)
+            st.session_state.pop('search_tag_prefill', None)
+            st.session_state.pop('history_search', None)
             st.rerun()
         show_vehicle_history()
         return
