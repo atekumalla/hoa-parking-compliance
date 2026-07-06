@@ -474,9 +474,20 @@ def _show_todays_entries():
         selected_idx = event.selection.rows[0]
         selected_row = display_df.iloc[selected_idx]
         plate = selected_row['License Plate']
-        if plate and plate.strip() and plate != 'nan':
-            st.session_state.search_plate_prefill = plate
-            st.rerun()
+        tag = selected_row['Tag Number']
+        has_plate = plate and plate.strip() and plate != 'nan'
+        has_tag = tag and tag.strip() and tag != 'nan'
+        
+        if has_plate or has_tag:
+            col_p, col_t = st.columns(2)
+            with col_p:
+                if has_plate and st.button(f"🔍 History for plate **{plate}**", key="sel_plate", use_container_width=True):
+                    st.session_state.search_plate_prefill = plate
+                    st.rerun()
+            with col_t:
+                if has_tag and st.button(f"🔍 History for tag **{tag}**", key="sel_tag", use_container_width=True):
+                    st.session_state.search_tag_prefill = tag
+                    st.rerun()
     
     # Delete entry section
     with st.expander("🗑️ Delete an entry"):
