@@ -460,35 +460,23 @@ def _show_todays_entries():
     display_df[str_cols] = display_df[str_cols].astype(str)
     display_df['Days (30d)'] = pd.to_numeric(display_df['Days (30d)'], errors='coerce').fillna(0).astype(int)
     
-    st.dataframe(
+    event = st.dataframe(
         display_df,
         width="stretch",
         hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
     )
-    st.caption(f"🕐 {len(display_df)} entr{'y' if len(display_df) == 1 else 'ies'} today — review before adding a new one.")
+    st.caption(f"🕐 {len(display_df)} entr{'y' if len(display_df) == 1 else 'ies'} today — tap a row to view its history.")
     
-    # Clickable plates and tags — navigate to Vehicle History on click
-    unique_plates = [p for p in display_df['License Plate'].unique() if p and p.strip() and p != 'nan']
-    unique_tags = [t for t in display_df['Tag Number'].unique() if t and t.strip() and t != 'nan']
-    
-    if unique_plates or unique_tags:
-        st.markdown("**🔗 Click to view history:**")
-        # Show plates as clickable buttons
-        if unique_plates:
-            plate_cols = st.columns(min(len(unique_plates), 4))
-            for i, plate in enumerate(unique_plates):
-                with plate_cols[i % min(len(unique_plates), 4)]:
-                    if st.button(f"🚗 {plate}", key=f"today_plate_{plate}"):
-                        st.session_state.search_plate_prefill = plate
-                        st.rerun()
-        # Show tags as clickable buttons
-        if unique_tags:
-            tag_cols = st.columns(min(len(unique_tags), 4))
-            for i, tag in enumerate(unique_tags):
-                with tag_cols[i % min(len(unique_tags), 4)]:
-                    if st.button(f"🏷️ Tag {tag}", key=f"today_tag_{tag}"):
-                        st.session_state.search_tag_prefill = tag
-                        st.rerun()
+    # Navigate to Vehicle History when a row is selected
+    if event.selection and event.selection.rows:
+        selected_idx = event.selection.rows[0]
+        selected_row = display_df.iloc[selected_idx]
+        plate = selected_row['License Plate']
+        if plate and plate.strip() and plate != 'nan':
+            st.session_state.search_plate_prefill = plate
+            st.rerun()
     
     # Delete entry section
     with st.expander("🗑️ Delete an entry"):
