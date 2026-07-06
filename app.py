@@ -1517,21 +1517,19 @@ def show_vehicle_history():
             unique_plates = history['License Plate'].unique()
             
             for plate in unique_plates:
-                st.markdown(f"### {plate}")
                 plate_history = history[history['License Plate'] == plate]
                 
-                # Display summary
+                # Display summary inline with plate header
                 total_entries = len(plate_history)
                 total_warnings = (plate_history['Warned'] == 'Y').sum()
                 total_tows = (plate_history['Towed'] == 'Y').sum()
                 
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Total Entries", total_entries)
-                col2.metric("Total Warnings", total_warnings)
-                col3.metric("Times Towed", total_tows)
-                
-                # Display detailed history
-                st.markdown("#### Detailed History")
+                st.markdown(
+                    f"### {plate} &nbsp; · &nbsp; "
+                    f"📋 {total_entries} entr{'y' if total_entries == 1 else 'ies'} &nbsp; · &nbsp; "
+                    f"⚠️ {total_warnings} warning{'s' if total_warnings != 1 else ''} &nbsp; · &nbsp; "
+                    f"🚨 {total_tows} tow{'s' if total_tows != 1 else ''}"
+                )
                 
                 # Format dataframe for display
                 display_df = plate_history[[
