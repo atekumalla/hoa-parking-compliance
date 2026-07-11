@@ -46,6 +46,8 @@ class DriveManager:
         self.credentials_path = credentials_path
         self._service = None  # Service account service (for read/list/delete)
         self._monthly_folder_cache = {}
+        self._oauth_service_cache = None  # Cache OAuth service to avoid re-parsing discovery doc
+        self._oauth_token = None  # Track which token the cached service was built with
 
     @property
     def service(self):
@@ -56,12 +58,25 @@ class DriveManager:
                 self.credentials_path,
                 scopes=scopes
             )
-            self._service = build('drive', 'v3', credentials=creds)
+            self._service = build('drive', 'v3', credentials=creds,
+                                   static_discovery=True)
         return self._service
 
     def _get_oauth_service(self, oauth_credentials: OAuthCredentials):
-        """Build a Drive service using user OAuth credentials (for uploads)."""
-        return build('drive', 'v3', credentials=oauth_credentials)
+        """Build a Drive service using user OAuth credentials (for uploads).
+        
+        Caches the service to avoid re-parsing the ~300KB discovery JSON on every call.
+        Rebuilds if the token changes (e.g., after refresh).
+        """
+        token = getattr(oauth_credentials, 'token', None)
+        if self._oauth_service_cache is not None and self._oauth_token == token:
+            return self._oauth_service_cache
+        
+        svc = build('drive', 'v3', credentials=oauth_credentials,
+                     static_discovery=True)
+        self._oauth_service_cache = svc
+        self._oauth_token = token
+        return svc
 
     def _get_or_create_monthly_folder(self, year_month: str, drive_service=None) -> str:
         """
@@ -236,6 +251,7 @@ class DriveManager:
     def get_storage_usage(self) -> Dict[str, any]:
         """
         Calculate storage usage by summing file sizes in the shared folder.
+        Uses pagination to avoid loading all file metadata into memory at once.
 
         Returns:
             Dict with 'used_bytes', 'used_human', 'file_count'
@@ -246,10 +262,31 @@ class DriveManager:
 
             monthly_folders = self.list_monthly_folders()
             for folder in monthly_folders:
-                files = self.list_files_in_folder(folder['id'])
-                for f in files:
-                    total_size += int(f.get('size', 0))
-                    file_count += 1
+                # Count files incrementally per page to limit memory
+                page_token = None
+                while True:
+                    query = (
+                        f"'{folder['id']}' in parents and "
+                        f"mimeType != 'application/vnd.google-apps.folder' and "
+                        f"trashed = false"
+                    )
+                    results = self.service.files().list(
+                        q=query,
+                        spaces='drive',
+                        fields='nextPageToken, files(size)',
+                        pageSize=100,
+                        pageToken=page_token,
+                        supportsAllDrives=True,
+                        includeItemsFromAllDrives=True
+                    ).execute()
+
+                    for f in results.get('files', []):
+                        total_size += int(f.get('size', 0))
+                        file_count += 1
+
+                    page_token = results.get('nextPageToken')
+                    if not page_token:
+                        break
 
             return {
                 'used_bytes': total_size,

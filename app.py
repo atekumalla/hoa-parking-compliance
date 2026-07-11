@@ -186,7 +186,7 @@ def load_data(force_refresh=False):
                 cutoff_30 = datetime.now() - timedelta(days=30)
                 st.session_state.rolling_data = st.session_state.historical_data[
                     st.session_state.historical_data['Timestamp'] >= cutoff_30
-                ].copy()
+                ]
             else:
                 st.session_state.rolling_data = pd.DataFrame(columns=st.session_state.sheets_manager.COLUMNS)
             
@@ -205,6 +205,9 @@ def load_data(force_refresh=False):
             today_pst = datetime.now(pst).date()
             cache_key = f'todays_entries_{today_pst}'
             st.session_state.pop(cache_key, None)
+            
+            # Invalidate known vehicles cache
+            st.session_state.pop('_known_vehicles_cache', None)
             
             # Prompt garbage collection after loading large DataFrames
             gc.collect()
@@ -363,9 +366,16 @@ def _fix_camera_orientation(image_bytes: bytes) -> bytes:
 
 
 def get_known_vehicles():
-    """Get a list of known vehicles from historical data for quick-add dropdowns."""
+    """Get a list of known vehicles from historical data for quick-add dropdowns.
+    
+    Cached in session state and invalidated when data is reloaded.
+    """
     if not st.session_state.get('data_loaded', False):
         return []
+    
+    # Return cached result if available
+    if '_known_vehicles_cache' in st.session_state:
+        return st.session_state['_known_vehicles_cache']
     
     historical = st.session_state.get('historical_data', pd.DataFrame())
     if historical.empty:
@@ -395,7 +405,9 @@ def get_known_vehicles():
             'model': model
         })
     
-    return sorted(vehicle_list, key=lambda x: str(x['license_plate']))
+    result = sorted(vehicle_list, key=lambda x: str(x['license_plate']))
+    st.session_state['_known_vehicles_cache'] = result
+    return result
 
 
 def _show_todays_entries():
@@ -1594,16 +1606,71 @@ def show_vehicle_history():
                 st.markdown("---")
 
 
+def _get_cached_storage_usage(drive_mgr):
+    """Get storage usage with caching to avoid re-listing all files on every rerun."""
+    cache_key = '_storage_usage_cache'
+    cache_time_key = '_storage_usage_time'
+    
+    cached = st.session_state.get(cache_key)
+    cached_time = st.session_state.get(cache_time_key)
+    
+    # Cache for 5 minutes
+    if cached and cached_time and (datetime.now() - cached_time).total_seconds() < 300:
+        return cached
+    
+    usage = drive_mgr.get_storage_usage()
+    st.session_state[cache_key] = usage
+    st.session_state[cache_time_key] = datetime.now()
+    return usage
+
+
+def _get_cached_folder_info(drive_mgr):
+    """Get per-folder file info with caching."""
+    cache_key = '_folder_info_cache'
+    cache_time_key = '_folder_info_time'
+    
+    cached = st.session_state.get(cache_key)
+    cached_time = st.session_state.get(cache_time_key)
+    
+    # Cache for 5 minutes
+    if cached and cached_time and (datetime.now() - cached_time).total_seconds() < 300:
+        return cached
+    
+    monthly_folders = drive_mgr.list_monthly_folders()
+    folder_info = []
+    for folder in monthly_folders:
+        files = drive_mgr.list_files_in_folder(folder['id'])
+        total_size = sum(int(f.get('size', 0)) for f in files)
+        folder_info.append({
+            'name': folder['name'],
+            'id': folder['id'],
+            'file_count': len(files),
+            'total_size': DriveManager._bytes_to_human(total_size)
+        })
+    
+    st.session_state[cache_key] = folder_info
+    st.session_state[cache_time_key] = datetime.now()
+    return folder_info
+
+
 def show_storage_management():
     """Display storage usage and photo cleanup tools."""
     st.header("💾 Storage Management")
     
     drive_mgr = st.session_state.drive_manager
     
+    # Refresh button to invalidate cache
+    if st.button("🔄 Refresh Storage Info", key="refresh_storage"):
+        st.session_state.pop('_storage_usage_cache', None)
+        st.session_state.pop('_storage_usage_time', None)
+        st.session_state.pop('_folder_info_cache', None)
+        st.session_state.pop('_folder_info_time', None)
+        st.rerun()
+    
     # --- Storage Usage ---
     st.subheader("📊 Storage Usage")
     
-    usage = drive_mgr.get_storage_usage()
+    usage = _get_cached_storage_usage(drive_mgr)
     
     if usage.get('error'):
         st.warning(f"⚠️ Could not fetch usage: {usage['error']}")
@@ -1629,22 +1696,11 @@ def show_storage_management():
     st.caption("Select a month to delete all photos from that month's folder. "
                "Download/copy photos first before deleting!")
     
-    monthly_folders = drive_mgr.list_monthly_folders()
+    folder_info = _get_cached_folder_info(drive_mgr)
     
-    if not monthly_folders:
+    if not folder_info:
         st.info("No monthly folders found. Photos will appear here once uploaded.")
     else:
-        # Build folder info with file counts
-        folder_info = []
-        for folder in monthly_folders:
-            files = drive_mgr.list_files_in_folder(folder['id'])
-            total_size = sum(int(f.get('size', 0)) for f in files)
-            folder_info.append({
-                'name': folder['name'],
-                'id': folder['id'],
-                'file_count': len(files),
-                'total_size': DriveManager._bytes_to_human(total_size)
-            })
         
         # Display as a table
         folder_df = pd.DataFrame(folder_info)
@@ -1689,6 +1745,9 @@ def show_storage_management():
                             success, failed = drive_mgr.delete_monthly_folder_contents(
                                 target_folder['id']
                             )
+                            # Invalidate storage cache after deletion
+                            st.session_state.pop('_storage_usage_cache', None)
+                            st.session_state.pop('_folder_info_cache', None)
                             if failed == 0:
                                 st.success(f"✅ Deleted {success} photos from {target_folder['name']}")
                                 st.rerun()
