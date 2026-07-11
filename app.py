@@ -672,30 +672,47 @@ def add_vehicle_entry_form():
     
     if known_vehicles:
         st.subheader("⚡ Quick Select Known Vehicle")
-        vehicle_options = ["-- Select a known vehicle to auto-fill --"] + [v['label'] for v in known_vehicles]
-        # Use a dynamic key that resets after each submission
-        qs_key = f"quick_select_vehicle_{st.session_state.get('qs_reset_counter', 0)}"
-        selected = st.selectbox(
-            "Pick from previously seen vehicles:",
-            vehicle_options,
-            key=qs_key
+        # Text input for freeform substring search (case-insensitive)
+        qs_key = f"quick_select_search_{st.session_state.get('qs_reset_counter', 0)}"
+        search_text = st.text_input(
+            "🔎 Type to search (plate, tag, make, model):",
+            key=qs_key,
+            placeholder="e.g. ABC, Honda, 1234..."
         )
         
-        if selected != vehicle_options[0]:
-            # Find the selected vehicle
-            idx = vehicle_options.index(selected) - 1
-            vehicle = known_vehicles[idx]
-            st.session_state['prefill_plate'] = vehicle['license_plate']
-            st.session_state['prefill_tag'] = vehicle['tag_number']
-            st.session_state['prefill_make'] = vehicle['make']
-            st.session_state['prefill_model'] = vehicle['model']
+        # Filter vehicles by substring match (case-insensitive)
+        if search_text.strip():
+            query = search_text.strip().lower()
+            filtered = [v for v in known_vehicles if query in v['label'].lower()]
         else:
-            # Only clear prefill if NOT set by photo analysis
-            if not st.session_state.get('attached_photo_bytes'):
-                st.session_state.pop('prefill_plate', None)
-                st.session_state.pop('prefill_tag', None)
-                st.session_state.pop('prefill_make', None)
-                st.session_state.pop('prefill_model', None)
+            filtered = known_vehicles
+        
+        if filtered:
+            sel_key = f"quick_select_pick_{st.session_state.get('qs_reset_counter', 0)}"
+            options = ["-- Pick from matches --"] + [v['label'] for v in filtered]
+            selected = st.selectbox(
+                f"{len(filtered)} vehicle(s) match:",
+                options,
+                key=sel_key,
+                label_visibility="collapsed"
+            )
+            
+            if selected != options[0]:
+                idx = options.index(selected) - 1
+                vehicle = filtered[idx]
+                st.session_state['prefill_plate'] = vehicle['license_plate']
+                st.session_state['prefill_tag'] = vehicle['tag_number']
+                st.session_state['prefill_make'] = vehicle['make']
+                st.session_state['prefill_model'] = vehicle['model']
+            else:
+                # Only clear prefill if NOT set by photo analysis
+                if not st.session_state.get('attached_photo_bytes'):
+                    st.session_state.pop('prefill_plate', None)
+                    st.session_state.pop('prefill_tag', None)
+                    st.session_state.pop('prefill_make', None)
+                    st.session_state.pop('prefill_model', None)
+        elif search_text.strip():
+            st.caption("No vehicles match your search.")
     
     st.markdown("---")
     

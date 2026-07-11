@@ -5,15 +5,15 @@ Handles per-user Google OAuth2 authentication flow within Streamlit.
 Each user signs in with their own Google account to enable photo uploads
 to Google Drive (uploads count against the authenticating user's quota).
 
-Tokens are persisted to disk keyed by a random session ID that is stored
-in the URL query params (?sid=...).  Each browser keeps its own session ID,
-so multiple users get independent logins.  Tokens survive page refreshes
-and browser restarts (sid is also persisted to a browser cookie).
+Tokens are persisted in a browser cookie (base64-encoded JSON) so they
+survive Render container restarts, deploys, and idle spin-downs.
+The cookie has a 30-day max-age and stores the refresh_token which allows
+silent re-authentication without user interaction.
 """
 
+import base64
 import json
 import os
-import uuid
 import urllib.parse
 from typing import Optional
 
@@ -30,42 +30,32 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/auth'
 TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
 
-# Directory to store per-session token files
-_TOKEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.oauth_sessions')
+
+# ---------------------------------------------------------------------------
+# Browser cookie helpers (persist full token across container restarts)
+# ---------------------------------------------------------------------------
+
+_COOKIE_NAME = 'hoa_parking_token'
+_COOKIE_MAX_AGE_DAYS = 30
 
 
-def _ensure_token_dir():
-    """Create the token directory if it doesn't exist."""
-    os.makedirs(_TOKEN_DIR, exist_ok=True)
+def _token_to_cookie_value(creds: Credentials) -> str:
+    """Serialize credentials to a base64 string suitable for a cookie."""
+    data = {
+        'token': creds.token,
+        'refresh_token': creds.refresh_token,
+        'token_uri': creds.token_uri,
+        'client_id': creds.client_id,
+        'client_secret': creds.client_secret,
+        'scopes': list(creds.scopes) if creds.scopes else list(SCOPES),
+    }
+    return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
 
 
-def _save_session_token(session_id: str, creds: Credentials):
-    """Save OAuth credentials to disk keyed by session_id."""
-    _ensure_token_dir()
-    path = os.path.join(_TOKEN_DIR, f"{session_id}.json")
+def _cookie_value_to_token(value: str) -> Optional[Credentials]:
+    """Deserialize credentials from a base64 cookie value."""
     try:
-        data = {
-            'token': creds.token,
-            'refresh_token': creds.refresh_token,
-            'token_uri': creds.token_uri,
-            'client_id': creds.client_id,
-            'client_secret': creds.client_secret,
-            'scopes': list(creds.scopes) if creds.scopes else list(SCOPES),
-        }
-        with open(path, 'w') as f:
-            json.dump(data, f)
-    except Exception:
-        pass
-
-
-def _load_session_token(session_id: str) -> Optional[Credentials]:
-    """Load OAuth credentials from disk for a given session_id."""
-    path = os.path.join(_TOKEN_DIR, f"{session_id}.json")
-    try:
-        if not os.path.exists(path):
-            return None
-        with open(path, 'r') as f:
-            data = json.load(f)
+        data = json.loads(base64.urlsafe_b64decode(value.encode()))
         if not data.get('refresh_token'):
             return None
         creds = Credentials(
@@ -80,42 +70,19 @@ def _load_session_token(session_id: str) -> Optional[Credentials]:
         if creds.expired or not creds.token:
             from google.auth.transport.requests import Request
             creds.refresh(Request())
-            _save_session_token(session_id, creds)
         return creds
     except Exception:
-        # Corrupt or expired — remove the file
-        try:
-            os.remove(path)
-        except Exception:
-            pass
         return None
 
 
-def _delete_session_token(session_id: str):
-    """Remove the session token file from disk."""
-    path = os.path.join(_TOKEN_DIR, f"{session_id}.json")
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-    except Exception:
-        pass
-
-
-# ---------------------------------------------------------------------------
-# Browser cookie helpers (persist sid across browser restarts)
-# ---------------------------------------------------------------------------
-
-_COOKIE_NAME = 'hoa_parking_sid'
-_COOKIE_MAX_AGE_DAYS = 30
-
-
-def _inject_set_cookie_js(session_id: str):
-    """Inject invisible JS to save the session ID as a browser cookie."""
+def _inject_set_cookie_js(creds: Credentials):
+    """Inject invisible JS to save the token as a browser cookie."""
+    value = _token_to_cookie_value(creds)
     js = f"""
     <script>
     (function() {{
         var maxAge = {_COOKIE_MAX_AGE_DAYS} * 24 * 60 * 60;
-        document.cookie = "{_COOKIE_NAME}={session_id}; path=/; max-age=" + maxAge + "; SameSite=Lax";
+        document.cookie = "{_COOKIE_NAME}=" + "{value}" + "; path=/; max-age=" + maxAge + "; SameSite=Lax";
     }})();
     </script>
     """
@@ -136,26 +103,23 @@ def _inject_clear_cookie_js():
 
 def _inject_restore_from_cookie_js():
     """
-    Inject invisible JS that restores the session from a browser cookie.
-
-    If the URL doesn't already have ?sid= (or ?code= for OAuth callback),
-    but the browser cookie contains a saved sid, redirect to ?sid=<value>
-    so the server-side logic can restore credentials from disk.
+    Inject invisible JS that reads the token cookie and passes it back
+    to the server via a query param so we can restore credentials.
     """
     js = f"""
     <script>
     (function() {{
         var params = new URLSearchParams(window.parent.location.search);
-        // Don't interfere if sid or code already present
-        if (params.has('sid') || params.has('code')) return;
+        // Don't interfere if token or code already present
+        if (params.has('tkn') || params.has('code')) return;
 
         // Read cookie
         var match = document.cookie.match(/(^|;\\s*){_COOKIE_NAME}=([^;]+)/);
         if (match && match[2]) {{
-            var sid = match[2];
-            // Redirect parent to include ?sid=
+            var tkn = match[2];
+            // Pass token via query param for server-side restore
             var url = new URL(window.parent.location.href);
-            url.searchParams.set('sid', sid);
+            url.searchParams.set('tkn', tkn);
             window.parent.location.replace(url.toString());
         }}
     }})();
@@ -227,8 +191,6 @@ def exchange_code_for_credentials(code: str) -> Optional[Credentials]:
     """
     Exchange an authorization code for OAuth credentials via HTTP POST.
 
-    No PKCE code_verifier — uses client_secret for security instead.
-
     Args:
         code: The authorization code from Google's redirect.
 
@@ -264,11 +226,6 @@ def exchange_code_for_credentials(code: str) -> Optional[Credentials]:
             scopes=SCOPES,
         )
 
-        # Generate a unique session ID and persist token to disk
-        session_id = str(uuid.uuid4())
-        _save_session_token(session_id, creds)
-        st.session_state['oauth_session_id'] = session_id
-
         return creds
 
     except Exception as e:
@@ -280,27 +237,30 @@ def get_user_credentials() -> Optional[Credentials]:
     """
     Get the current user's OAuth credentials.
 
-    Checks session state first, then tries to restore from disk using
-    the session ID in the URL query params (survives page refresh).
+    Checks session state first, then tries to restore from the browser
+    cookie via the ?tkn= query param.
 
     Returns:
         Credentials object if authenticated, None otherwise.
     """
     creds = st.session_state.get('oauth_credentials')
 
-    # If not in memory, try restoring from disk via URL session key
+    # If not in memory, try restoring from cookie token passed via query param
     if creds is None:
-        sid = st.session_state.get('oauth_session_id') or st.query_params.get('sid')
-        if sid:
-            creds = _load_session_token(sid)
+        tkn = st.query_params.get('tkn')
+        if tkn:
+            creds = _cookie_value_to_token(tkn)
             if creds:
                 st.session_state['oauth_credentials'] = creds
-                st.session_state['oauth_session_id'] = sid
                 st.session_state['oauth_user_authenticated'] = True
+                # Clear tkn from URL and persist updated cookie
+                st.query_params.clear()
+                _inject_set_cookie_js(creds)
                 return creds
             else:
-                # Token file gone or expired — clean up
-                st.session_state.pop('oauth_session_id', None)
+                # Cookie token invalid/expired — clear it
+                st.query_params.clear()
+                _inject_clear_cookie_js()
         return None
 
     # Check if credentials are expired and refresh if possible
@@ -309,18 +269,13 @@ def get_user_credentials() -> Optional[Credentials]:
             from google.auth.transport.requests import Request
             creds.refresh(Request())
             st.session_state['oauth_credentials'] = creds
-            # Persist refreshed token
-            sid = st.session_state.get('oauth_session_id')
-            if sid:
-                _save_session_token(sid, creds)
+            # Update cookie with refreshed token
+            _inject_set_cookie_js(creds)
         except Exception:
             # Refresh failed — user needs to re-authenticate
-            sid = st.session_state.get('oauth_session_id')
-            if sid:
-                _delete_session_token(sid)
             st.session_state.pop('oauth_credentials', None)
-            st.session_state.pop('oauth_session_id', None)
             st.session_state.pop('oauth_user_authenticated', None)
+            _inject_clear_cookie_js()
             return None
 
     return creds
@@ -337,8 +292,8 @@ def handle_oauth_callback():
 
     Should be called early in the app lifecycle. If a code is present,
     it exchanges it for credentials and stores them in session state.
-    After auth, the session ID is persisted in the URL and in a browser
-    cookie so that credentials survive page refreshes AND browser restarts.
+    After auth, the token is persisted in a browser cookie so credentials
+    survive container restarts.
     """
     params = st.query_params
     code = params.get('code')
@@ -348,29 +303,17 @@ def handle_oauth_callback():
         if creds:
             st.session_state['oauth_credentials'] = creds
             st.session_state['oauth_user_authenticated'] = True
-        # Replace code param with sid so credentials survive refresh
-        sid = st.session_state.get('oauth_session_id')
-        if sid:
+            # Clear code from URL and save token to cookie
             st.query_params.clear()
-            st.query_params['sid'] = sid
-            # Persist sid to browser cookie for cross-restart survival
-            _inject_set_cookie_js(sid)
+            _inject_set_cookie_js(creds)
         else:
             st.query_params.clear()
+    elif 'oauth_credentials' in st.session_state:
+        # Already authenticated — keep cookie fresh
+        _inject_set_cookie_js(st.session_state['oauth_credentials'])
     else:
-        # On normal loads, ensure sid stays in URL if we have one
-        sid = st.session_state.get('oauth_session_id')
-        if sid and params.get('sid') != sid:
-            st.query_params['sid'] = sid
-            # Keep cookie in sync
-            _inject_set_cookie_js(sid)
-        elif sid:
-            # Already in URL, ensure cookie is set too
-            _inject_set_cookie_js(sid)
-        else:
-            # No active session — try to restore from browser cookie
-            # (handles browser restart where session_state is lost)
-            _inject_restore_from_cookie_js()
+        # No active session — try to restore from browser cookie
+        _inject_restore_from_cookie_js()
 
 
 def show_auth_ui():
@@ -389,13 +332,8 @@ def show_auth_ui():
     if is_user_authenticated():
         st.success("✅ Signed in to Google — photo uploads enabled")
         if st.button("🚪 Sign out", key="oauth_signout"):
-            sid = st.session_state.get('oauth_session_id')
-            if sid:
-                _delete_session_token(sid)
             st.session_state.pop('oauth_credentials', None)
             st.session_state.pop('oauth_user_authenticated', None)
-            st.session_state.pop('oauth_session_id', None)
-            st.query_params.pop('sid', None)
             _inject_clear_cookie_js()
             st.rerun()
     else:
@@ -405,11 +343,7 @@ def show_auth_ui():
 
 
 def logout():
-    """Clear OAuth credentials from session state, disk, and browser cookie."""
-    sid = st.session_state.get('oauth_session_id')
-    if sid:
-        _delete_session_token(sid)
+    """Clear OAuth credentials from session state and browser cookie."""
     st.session_state.pop('oauth_credentials', None)
     st.session_state.pop('oauth_user_authenticated', None)
-    st.session_state.pop('oauth_session_id', None)
     _inject_clear_cookie_js()
