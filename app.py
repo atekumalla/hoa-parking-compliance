@@ -4,6 +4,7 @@ HOA Guest Parking Compliance Tracker - Main Streamlit Application
 A web application for tracking and enforcing HOA guest parking rules.
 """
 
+import faulthandler
 import gc
 import os
 import base64
@@ -65,6 +66,11 @@ if _MEMORY_DEBUG:
     _logger.setLevel(logging.DEBUG)
 else:
     _logger.setLevel(logging.INFO)
+
+# Enable C-level fault handler so SIGSEGV/SIGFPE/SIGABRT dump a Python
+# traceback to stderr before the process dies. Without this, a crash inside
+# a native extension (e.g. libjpeg) produces zero output and exit 139.
+faulthandler.enable(file=sys.stderr, all_threads=True)
 
 
 def _log_memory(label: str):
