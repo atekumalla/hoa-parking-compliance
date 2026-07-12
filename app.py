@@ -282,33 +282,28 @@ def stamp_photo_with_timestamp(image_bytes: bytes) -> bytes:
         gc.collect()
 
 
-_COMPRESS_THRESHOLD_BYTES = 10 * 1024 * 1024  # 10 MB
-
-
 def _downscale_for_session(image_bytes: bytes, max_dim: int = 2048) -> bytes:
     """
-    Downscale raw upload/capture bytes before storing in session state.
+    Downscale and normalise raw upload/capture bytes before storing in session state.
 
-    On a 512MB container, keeping a 10MB+ raw photo (especially HEIC which
-    decompresses to ~100-200MB of pixel data) in memory is the #1 OOM trigger.
-    This re-encodes to a reasonable JPEG immediately so session state holds
-    at most ~500KB-1MB instead.
+    Always re-encodes to a capped-resolution JPEG regardless of input size.
+    This is the single chokepoint that prevents full-resolution pixel buffers
+    (~36 MB for a 12MP Android shot) from being held in session state and then
+    decoded again by stamp_photo_with_timestamp, the preview render, and AI
+    analysis — each of which would have allocated another ~36–72 MB on the
+    512 MB Render container, culminating in a libjpeg NULL-deref SIGSEGV.
 
-    Only applies compression if the raw bytes exceed 10 MB.  Photos that are
-    already small (e.g. taken in "Min" resolution mode on the camera component)
-    are returned unchanged to avoid unnecessary quality loss.
+    Also applies exif_transpose here so all downstream callers (preview,
+    stamp, AI) receive an already-oriented image and skip their own transpose.
 
     Args:
         image_bytes: Raw bytes from camera or file upload.
-        max_dim: Maximum pixel dimension (longest side).
+        max_dim: Maximum pixel dimension (longest side). Default 2048 is more
+                 than sufficient for parking-enforcement photos.
 
     Returns:
-        Re-encoded JPEG bytes (or original if already small / on error).
+        Re-encoded JPEG bytes capped at max_dim, or original bytes on error.
     """
-    # Skip compression for photos already under the threshold
-    if len(image_bytes) <= _COMPRESS_THRESHOLD_BYTES:
-        return image_bytes
-
     try:
         img = Image.open(BytesIO(image_bytes))
         try:
