@@ -56,15 +56,15 @@ SCOREBOARD_TOP_N = int(os.getenv('SCOREBOARD_TOP_N', '20'))
 _MEMORY_DEBUG = os.getenv('MEMORY_DEBUG', '0').strip().lower() in ('1', 'true', 'yes')
 
 _logger = logging.getLogger("hoa_parking")
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    stream=sys.stderr,
+)
 if _MEMORY_DEBUG:
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        stream=sys.stderr,
-    )
     _logger.setLevel(logging.DEBUG)
 else:
-    _logger.setLevel(logging.WARNING)
+    _logger.setLevel(logging.INFO)
 
 
 def _log_memory(label: str):
