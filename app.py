@@ -75,37 +75,49 @@ faulthandler.enable(file=sys.stderr, all_threads=True)
 
 def _log_memory(label: str):
     """Log current process memory usage if MEMORY_DEBUG is enabled.
-    
-    Reports both current RSS and peak RSS to help identify memory spikes.
-    On Linux (Render), reads /proc/self/status for accurate current RSS.
-    On macOS (local dev), falls back to resource module (peak only).
+
+    Reports three metrics to distinguish physical from virtual memory:
+      - RSS      : current resident (physical) RAM
+      - PeakRSS  : VmHWM, the peak physical RAM ever used — this is what
+                   Render's OOM killer watches. Compare against the 512MB limit.
+      - PeakVMem : VmPeak, peak virtual address space. Informational only;
+                   the numpy/pyarrow/pandas stack routinely maps GBs of virtual
+                   memory that never becomes physical RAM, so a large value here
+                   is NOT an OOM signal on its own.
+    On Linux (Render), reads /proc/self/status. On macOS (local dev), falls
+    back to the resource module (peak only).
     """
     if not _MEMORY_DEBUG:
         return
     try:
         current_mb = None
-        peak_mb = None
-        # Linux: read current RSS from /proc (accurate, what Render uses)
+        peak_rss_mb = None   # VmHWM: peak *physical* RAM — this is what triggers OOM kills
+        peak_vmem_mb = None  # VmPeak: peak *virtual* address space — informational only
+        # Linux: read from /proc (accurate, what Render uses)
         if os.path.exists('/proc/self/status'):
             with open('/proc/self/status') as f:
                 for line in f:
                     if line.startswith('VmRSS:'):
                         current_mb = int(line.split()[1]) / 1024  # kB → MB
+                    elif line.startswith('VmHWM:'):
+                        peak_rss_mb = int(line.split()[1]) / 1024
                     elif line.startswith('VmPeak:'):
-                        peak_mb = int(line.split()[1]) / 1024
+                        peak_vmem_mb = int(line.split()[1]) / 1024
         # Fallback: resource module (peak RSS only)
         if current_mb is None:
             usage = resource.getrusage(resource.RUSAGE_SELF)
             if sys.platform == 'darwin':
-                peak_mb = usage.ru_maxrss / (1024 * 1024)  # bytes → MB
+                peak_rss_mb = usage.ru_maxrss / (1024 * 1024)  # bytes → MB
             else:
-                peak_mb = usage.ru_maxrss / 1024  # KB → MB
+                peak_rss_mb = usage.ru_maxrss / 1024  # KB → MB
         
         parts = [f"[MEMORY] {label}:"]
         if current_mb is not None:
             parts.append(f"RSS={current_mb:.1f}MB")
-        if peak_mb is not None:
-            parts.append(f"Peak={peak_mb:.1f}MB")
+        if peak_rss_mb is not None:
+            parts.append(f"PeakRSS={peak_rss_mb:.1f}MB")
+        if peak_vmem_mb is not None:
+            parts.append(f"PeakVMem={peak_vmem_mb:.1f}MB")
         _logger.debug(" ".join(parts))
     except Exception:
         pass  # Never crash due to memory logging
@@ -468,18 +480,28 @@ def _show_todays_entries():
     plates_for_delete = df_today.sort_values('Timestamp', ascending=False)['License Plate'].tolist()
     photo_urls_for_delete = df_today.sort_values('Timestamp', ascending=False)['Photo URL'].fillna('').tolist()
     
-    # Ensure non-numeric columns are strings to avoid Arrow serialization issues with mixed types
+    # Build a clean Arrow-safe DataFrame from scratch to prevent segfaults
+    # during pyarrow column conversion (mixed types / NaN in object columns).
     str_cols = [c for c in display_df.columns if c != 'Days (30d)']
-    display_df[str_cols] = display_df[str_cols].astype(str)
-    display_df['Days (30d)'] = pd.to_numeric(display_df['Days (30d)'], errors='coerce').fillna(0).astype(int)
-    
-    event = st.dataframe(
-        display_df,
-        width="stretch",
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-    )
+    clean_data = {}
+    for col in str_cols:
+        clean_data[col] = display_df[col].fillna('').astype(str).values.tolist()
+    clean_data['Days (30d)'] = pd.to_numeric(display_df['Days (30d)'], errors='coerce').fillna(0).astype(int).values.tolist()
+    arrow_safe_df = pd.DataFrame(clean_data, columns=display_df.columns)
+
+    try:
+        event = st.dataframe(
+            arrow_safe_df,
+            width="stretch",
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+        )
+    except Exception as e:
+        logger = _logger
+        logger.warning(f"st.dataframe failed ({e}), falling back to st.table")
+        st.table(arrow_safe_df)
+        event = type('obj', (object,), {'selection': None})()
     st.caption(f"🕐 {len(display_df)} entr{'y' if len(display_df) == 1 else 'ies'} today — tap a row to view its history.")
     
     # Navigate to Vehicle History when a row is selected

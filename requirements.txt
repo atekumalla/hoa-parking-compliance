@@ -4,7 +4,10 @@ google-auth>=2.25.0
 google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
 google-api-python-client>=2.110.0
-pandas>=2.1.0
+pandas>=2.1.0,<2.4.0
+# Pin pyarrow (transitive via streamlit) so the native Arrow stack is
+# reproducible on Render. Unpinned drift caused a SIGSEGV in convert_column.
+pyarrow==21.0.0
 pillow>=10.1.0
 pillow-heif>=0.14.0
 python-dotenv>=1.0.0
