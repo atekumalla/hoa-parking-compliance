@@ -8,10 +8,12 @@ against their own Google Drive storage quota).
 """
 
 import os
+import threading
 from datetime import datetime
 from io import BytesIO
 from typing import Tuple, Optional, List, Dict
 
+import httplib2
 from PIL import Image, ImageOps
 
 # Register HEIC support with Pillow (iOS default photo format)
@@ -23,9 +25,47 @@ except ImportError:
 
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google.oauth2.credentials import Credentials as OAuthCredentials
+from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from googleapiclient.errors import HttpError
+
+
+# ---------------------------------------------------------------------------
+# Thread-safety for Google API calls.
+#
+# httplib2.Http reuses a single underlying SSL socket and is NOT thread-safe.
+# Streamlit can run multiple script-runner threads concurrently for the same
+# session (e.g. when a browser reconnects: "Session ... is already connected!").
+# Those threads share the same DriveManager instance (stored in st.session_state)
+# and therefore the same httplib2 connection. Two threads reading from the same
+# SSL socket at once corrupts its internal state and causes a native
+# Segmentation fault (crash occurs inside ssl.read / httplib2).
+#
+# We serialize every network request through a single global lock so a
+# connection is never used by two threads simultaneously.
+# ---------------------------------------------------------------------------
+_API_LOCK = threading.RLock()
+
+
+class _LockedHttp:
+    """Serializes all requests on an httplib2.Http instance via a global lock."""
+
+    def __init__(self, http):
+        self._http = http
+
+    def request(self, *args, **kwargs):
+        with _API_LOCK:
+            return self._http.request(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._http, name)
+
+
+def _build_locked_service(credentials):
+    """Build a Drive service whose transport is guarded by the global API lock."""
+    authed_http = AuthorizedHttp(credentials, http=_LockedHttp(httplib2.Http()))
+    return build('drive', 'v3', http=authed_http, static_discovery=True)
 
 
 class DriveManager:
@@ -58,8 +98,7 @@ class DriveManager:
                 self.credentials_path,
                 scopes=scopes
             )
-            self._service = build('drive', 'v3', credentials=creds,
-                                   static_discovery=True)
+            self._service = _build_locked_service(creds)
         return self._service
 
     def _get_oauth_service(self, oauth_credentials: OAuthCredentials):
@@ -72,8 +111,7 @@ class DriveManager:
         if self._oauth_service_cache is not None and self._oauth_token == token:
             return self._oauth_service_cache
         
-        svc = build('drive', 'v3', credentials=oauth_credentials,
-                     static_discovery=True)
+        svc = _build_locked_service(oauth_credentials)
         self._oauth_service_cache = svc
         self._oauth_token = token
         return svc
