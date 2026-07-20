@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>body { margin: 0; padding: 0; height: 0; overflow: hidden; }</style>
+</head>
+<body>
+<script>
+(function() {
+    var STORAGE_KEY = "hoa_parking_oauth_rt";
+
+    function sendMsg(type, data) {
+        window.parent.postMessage(
+            Object.assign({ isStreamlitMessage: true, type: type }, data), "*"
+        );
+    }
+    function setReady() { sendMsg("streamlit:componentReady", { apiVersion: 1 }); }
+    function setHeight(h) { sendMsg("streamlit:setFrameHeight", { height: h }); }
+    function setValue(v) { sendMsg("streamlit:setComponentValue", { value: v, dataType: "json" }); }
+
+    // Request persistent storage so Android doesn't evict it
+    if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist();
+    }
+
+    window.addEventListener("message", function(event) {
+        var data = event.data;
+        if (!data || data.type !== "streamlit:render") return;
+
+        var args = data.args || {};
+        var action = args.action || "read";
+
+        if (action === "write") {
+            // Store token in localStorage
+            try {
+                localStorage.setItem(STORAGE_KEY, args.token || "");
+            } catch(e) {}
+            setValue({ status: "written" });
+        } else if (action === "clear") {
+            try {
+                localStorage.removeItem(STORAGE_KEY);
+            } catch(e) {}
+            setValue({ status: "cleared" });
+        } else {
+            // read
+            var token = null;
+            try {
+                token = localStorage.getItem(STORAGE_KEY) || null;
+            } catch(e) {}
+            setValue({ status: "read", token: token });
+        }
+
+        setHeight(0);
+    });
+
+    setReady();
+    setHeight(0);
+})();
+</script>
+</body>
+</html>

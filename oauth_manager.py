@@ -5,16 +5,16 @@ Handles per-user Google OAuth2 authentication flow within Streamlit.
 Each user signs in with their own Google account to enable photo uploads
 to Google Drive (uploads count against the authenticating user's quota).
 
-Token persistence strategy:
-- The refresh_token (long-lived, doesn't expire unless revoked) is stored
-  in st.query_params (?rt=<base64>) so it persists in the URL across:
-  * Page refreshes
-  * Browser restarts
-  * Mobile app kills
-  * Render container restarts/deploys
-- On each new session, the refresh_token is used to silently obtain a
-  fresh access_token without user interaction.
-- No filesystem, cookies, or JS injection required.
+Token persistence strategy (dual):
+1. Browser localStorage (primary) — via a custom Streamlit component.
+   Persists reliably across page refreshes, browser restarts, and mobile
+   home-screen app kills on Android/iOS.
+2. URL query param ?rt= (fallback) — for backwards compatibility.
+   If localStorage is unavailable (private browsing, etc.), the token is
+   also kept in the URL so bookmarks/links still work.
+
+On each new session, the refresh_token is used to silently obtain a
+fresh access_token without user interaction.
 """
 
 import base64
@@ -25,8 +25,32 @@ from typing import Optional
 
 import requests
 import streamlit as st
+from streamlit.components.v1 import declare_component
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+
+
+# --- Token Storage Component (localStorage) ---
+_TOKEN_STORAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token_storage_component")
+_token_storage = declare_component("token_storage", path=_TOKEN_STORAGE_DIR)
+
+
+def _write_token_to_localstorage(encoded_token: str):
+    """Write token to browser localStorage via the component."""
+    _token_storage(action="write", token=encoded_token, key="__token_write", height=0)
+
+
+def _clear_token_from_localstorage():
+    """Remove token from browser localStorage."""
+    _token_storage(action="clear", key="__token_clear", height=0)
+
+
+def _read_token_from_localstorage() -> Optional[str]:
+    """Read token from browser localStorage. Returns encoded token or None."""
+    result = _token_storage(action="read", key="__token_read", height=0)
+    if result and isinstance(result, dict) and result.get("token"):
+        return result["token"]
+    return None
 
 
 # OAuth scopes needed for Drive file uploads
@@ -163,7 +187,7 @@ def get_user_credentials() -> Optional[Credentials]:
     """
     Get the current user's OAuth credentials.
 
-    Checks session state first, then tries to restore from the ?rt= query param.
+    Checks session state first, then localStorage, then ?rt= query param.
     """
     # 1. Already in memory for this session
     creds = st.session_state.get('oauth_credentials')
@@ -179,10 +203,26 @@ def get_user_credentials() -> Optional[Credentials]:
                 st.session_state.pop('oauth_user_authenticated', None)
                 if 'rt' in st.query_params:
                     del st.query_params['rt']
+                _clear_token_from_localstorage()
                 return None
         return creds
 
-    # 2. Try restoring from ?rt= in URL (survives all restarts)
+    # 2. Try restoring from localStorage (survives home-screen app restarts)
+    ls_token = _read_token_from_localstorage()
+    if ls_token:
+        token_data = _decode_refresh_token(ls_token)
+        if token_data:
+            creds = _refresh_credentials(
+                token_data['rt'], token_data['cid'], token_data['cs']
+            )
+            if creds:
+                st.session_state['oauth_credentials'] = creds
+                st.session_state['oauth_user_authenticated'] = True
+                return creds
+        # Token invalid — clear localStorage
+        _clear_token_from_localstorage()
+
+    # 3. Try restoring from ?rt= in URL (fallback / backwards compat)
     rt_encoded = st.query_params.get('rt')
     if rt_encoded:
         token_data = _decode_refresh_token(rt_encoded)
@@ -193,6 +233,8 @@ def get_user_credentials() -> Optional[Credentials]:
             if creds:
                 st.session_state['oauth_credentials'] = creds
                 st.session_state['oauth_user_authenticated'] = True
+                # Migrate: also store in localStorage for next time
+                _write_token_to_localstorage(rt_encoded)
                 return creds
 
         # Token invalid/revoked — clean up
@@ -222,12 +264,15 @@ def handle_oauth_callback():
             st.session_state['oauth_credentials'] = creds
             st.session_state['oauth_user_authenticated'] = True
 
-            # Persist refresh_token in URL for long-term survival
+            # Persist refresh_token in both localStorage and URL
             config = get_oauth_config()
             if creds.refresh_token and config:
                 encoded = _encode_refresh_token(
                     creds.refresh_token, config['client_id'], config['client_secret']
                 )
+                # Write to localStorage (primary persistence)
+                _write_token_to_localstorage(encoded)
+                # Also keep in URL as fallback
                 st.query_params.clear()
                 st.query_params['rt'] = encoded
             else:
@@ -250,6 +295,7 @@ def show_auth_ui():
         if st.button("🚪 Sign out", key="oauth_signout"):
             st.session_state.pop('oauth_credentials', None)
             st.session_state.pop('oauth_user_authenticated', None)
+            _clear_token_from_localstorage()
             if 'rt' in st.query_params:
                 del st.query_params['rt']
             st.rerun()
@@ -260,8 +306,9 @@ def show_auth_ui():
 
 
 def logout():
-    """Clear OAuth credentials from session state and URL."""
+    """Clear OAuth credentials from session state, localStorage, and URL."""
     st.session_state.pop('oauth_credentials', None)
     st.session_state.pop('oauth_user_authenticated', None)
+    _clear_token_from_localstorage()
     if 'rt' in st.query_params:
         del st.query_params['rt']
