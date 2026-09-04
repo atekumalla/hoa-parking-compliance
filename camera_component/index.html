@@ -59,22 +59,55 @@
         }
         /* Zoom slider */
         .zoom-row {
-            display: flex; gap: 8px; padding: 6px 12px;
-            justify-content: center; align-items: center;
+            display: flex; flex-direction: column; gap: 6px; padding: 10px 4px 6px;
+            justify-content: center; align-items: stretch;
         }
         .zoom-row.hidden { display: none !important; }
         .zoom-label {
-            font-size: 12px; color: #888; white-space: nowrap;
+            font-size: 15px; font-weight: 600; color: #ccc;
+            white-space: nowrap; text-align: center;
         }
         .zoom-slider {
             -webkit-appearance: none; appearance: none;
-            width: 140px; height: 6px;
-            background: #333; border-radius: 3px; outline: none;
+            width: 100%; height: 40px;
+            background: transparent; outline: none;
+            /* Full-width vertical hit area makes dragging easier on touch */
+            touch-action: none;
+        }
+        .zoom-slider::-webkit-slider-runnable-track {
+            height: 14px; background: #333; border-radius: 7px;
+        }
+        .zoom-slider::-moz-range-track {
+            height: 14px; background: #333; border-radius: 7px;
         }
         .zoom-slider::-webkit-slider-thumb {
             -webkit-appearance: none; appearance: none;
-            width: 20px; height: 20px;
-            background: #ff4b4b; border-radius: 50%; cursor: pointer;
+            width: 40px; height: 40px; margin-top: -13px;
+            background: #ff4b4b; border: 3px solid #fff;
+            border-radius: 50%; cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+        }
+        .zoom-slider::-moz-range-thumb {
+            width: 34px; height: 34px;
+            background: #ff4b4b; border: 3px solid #fff;
+            border-radius: 50%; cursor: pointer;
+        }
+        /* Quick zoom presets */
+        .zoom-presets {
+            display: flex; gap: 6px; justify-content: center;
+        }
+        .zoom-preset-btn {
+            padding: 8px 0; min-width: 56px;
+            border: 1px solid #444; border-radius: 6px;
+            font-size: 13px; font-weight: 600; cursor: pointer;
+            background: #1a1a2e; color: #aaa;
+        }
+        .zoom-preset-btn:active { background: #ff4b4b; color: #fff; }
+        .zoom-step-btn {
+            padding: 8px 0; min-width: 44px;
+            border: 1px solid #444; border-radius: 6px;
+            font-size: 16px; font-weight: 700; cursor: pointer;
+            background: #1a1a2e; color: #ddd;
         }
     </style>
 </head>
@@ -88,8 +121,16 @@
             <button class="capture-btn" id="captureBtn">📷 Capture</button>
         </div>
         <div class="zoom-row hidden" id="zoomRow">
-            <span class="zoom-label">🔍 1×</span>
+            <span class="zoom-label">🔍 1.0×</span>
             <input type="range" class="zoom-slider" id="zoomSlider" min="1" max="5" step="0.1" value="1">
+            <div class="zoom-presets" id="zoomPresets">
+                <button type="button" class="zoom-step-btn" id="zoomDown">−</button>
+                <button type="button" class="zoom-preset-btn" data-zoom="1">1×</button>
+                <button type="button" class="zoom-preset-btn" data-zoom="2">2×</button>
+                <button type="button" class="zoom-preset-btn" data-zoom="3">3×</button>
+                <button type="button" class="zoom-preset-btn" data-zoom="max">Max</button>
+                <button type="button" class="zoom-step-btn" id="zoomUp">+</button>
+            </div>
         </div>
         <div class="res-toggle" id="resToggles">
             <span class="res-toggle-label">Quality:</span>
@@ -132,11 +173,32 @@
         // Mid: 3024×2268 (6.9MP) — balanced quality/speed
         // Max: 4032×3024 (12MP) — full sensor, slowest
         var resPresets = {
-            min: { w: 1920, h: 1440, quality: 0.80, label: '2.8MP' },
-            mid: { w: 3024, h: 2268, quality: 0.85, label: '6.9MP' },
+            min: { w: 1920, h: 1440, quality: 0.92, label: '2.8MP' },
+            mid: { w: 3024, h: 2268, quality: 0.92, label: '6.9MP' },
             max: { w: 4032, h: 3024, quality: 0.92, label: '12MP' }
         };
-        var currentRes = 'min'; // default
+
+        var RES_STORAGE_KEY = 'hoaCameraResLevel';
+
+        function loadSavedRes() {
+            try {
+                var saved = window.localStorage.getItem(RES_STORAGE_KEY);
+                if (saved && resPresets[saved]) return saved;
+            } catch (e) {
+                // localStorage can be unavailable in sandboxed/private-mode iframes
+            }
+            return 'min';
+        }
+
+        function saveRes(level) {
+            try {
+                window.localStorage.setItem(RES_STORAGE_KEY, level);
+            } catch (e) {
+                // Non-fatal: the setting just won't persist across sessions
+            }
+        }
+
+        var currentRes = loadSavedRes();
 
         // --- Camera ---
         function getResPreset() { return resPresets[currentRes]; }
@@ -195,6 +257,21 @@
         var zoomRow = document.getElementById('zoomRow');
         var zoomSlider = document.getElementById('zoomSlider');
         var zoomLabel = zoomRow.querySelector('.zoom-label');
+        var zoomPresets = document.getElementById('zoomPresets');
+
+        function applyZoom(val) {
+            var min = parseFloat(zoomSlider.min);
+            var max = parseFloat(zoomSlider.max);
+            val = Math.min(max, Math.max(min, val));
+            zoomSlider.value = val;
+            zoomLabel.textContent = '🔍 ' + val.toFixed(1) + '×';
+            if (stream) {
+                var track = stream.getVideoTracks()[0];
+                if (track && track.applyConstraints) {
+                    track.applyConstraints({ advanced: [{ zoom: val }] }).catch(function() {});
+                }
+            }
+        }
 
         function setupZoom(mediaStream) {
             var track = mediaStream.getVideoTracks()[0];
@@ -207,7 +284,13 @@
                 if (maxZoom > minZoom) {
                     zoomSlider.min = minZoom;
                     zoomSlider.max = maxZoom;
-                    zoomSlider.step = (maxZoom - minZoom) > 10 ? 0.5 : 0.1;
+                    // ~200 steps across the range for fine touch control, but never
+                    // finer than the device's own zoom granularity.
+                    var step = (maxZoom - minZoom) / 200;
+                    if (capabilities.zoom.step) {
+                        step = Math.max(step, capabilities.zoom.step);
+                    }
+                    zoomSlider.step = Math.max(0.01, step);
                     // Read current zoom or default to min
                     var settings = track.getSettings ? track.getSettings() : {};
                     zoomSlider.value = settings.zoom || minZoom;
@@ -222,14 +305,20 @@
         }
 
         zoomSlider.addEventListener('input', function() {
-            var val = parseFloat(zoomSlider.value);
-            zoomLabel.textContent = '🔍 ' + val.toFixed(1) + '×';
-            if (stream) {
-                var track = stream.getVideoTracks()[0];
-                if (track && track.applyConstraints) {
-                    track.applyConstraints({ advanced: [{ zoom: val }] }).catch(function() {});
-                }
+            applyZoom(parseFloat(zoomSlider.value));
+        });
+
+        zoomPresets.addEventListener('click', function(e) {
+            var btn = e.target.closest ? e.target.closest('button') : null;
+            if (!btn) return;
+            e.preventDefault();
+            if (btn.id === 'zoomUp' || btn.id === 'zoomDown') {
+                var delta = (parseFloat(zoomSlider.max) - parseFloat(zoomSlider.min)) / 20;
+                applyZoom(parseFloat(zoomSlider.value) + (btn.id === 'zoomUp' ? delta : -delta));
+                return;
             }
+            var target = btn.getAttribute('data-zoom');
+            applyZoom(target === 'max' ? parseFloat(zoomSlider.max) : parseFloat(target));
         });
 
         function scrollIntoFullView() {
@@ -351,10 +440,12 @@
         // Resolution toggle buttons
         var resButtons = document.querySelectorAll('.res-btn');
         resButtons.forEach(function(btn) {
+            var level = btn.getAttribute('data-level');
+            btn.classList.toggle('active', level === currentRes);
             btn.addEventListener('click', function() {
-                var level = btn.getAttribute('data-level');
                 if (level === currentRes) return;
                 currentRes = level;
+                saveRes(level);
                 resButtons.forEach(function(b) { b.classList.remove('active'); });
                 btn.classList.add('active');
                 // Restart camera with new resolution (only if not already captured)

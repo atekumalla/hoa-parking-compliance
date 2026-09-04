@@ -335,7 +335,9 @@ def _downscale_for_session(image_bytes: bytes, max_dim: int = 2048) -> bytes:
                 img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
 
             buf = BytesIO()
-            img.save(buf, format="JPEG", quality=85, optimize=True)
+            # Quality 92: this is the only encode the AI ever sees, and JPEG
+            # artifacts at 85 blur the character edges plate OCR relies on.
+            img.save(buf, format="JPEG", quality=92, optimize=True)
             buf.seek(0)
             return buf.getvalue()
         finally:

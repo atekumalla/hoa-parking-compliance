@@ -32,9 +32,10 @@ def is_recognition_available() -> bool:
 
 
 # OpenAI Vision scales images to fit 2048px max and then tiles at 512px.
-# Anything above ~1280px adds tiles (cost) with negligible recognition gain.
-_MAX_DIMENSION = 1280
-_JPEG_QUALITY = 85
+# 2048px is the largest size the API uses, so downscaling below it throws away
+# plate detail; a distant plate is only ~60px wide at 1280px.
+_MAX_DIMENSION = 2048
+_JPEG_QUALITY = 92
 
 
 def _prepare_image_for_api(image_bytes: bytes) -> bytes:
@@ -45,12 +46,20 @@ def _prepare_image_for_api(image_bytes: bytes) -> bytes:
     - Scales so the longest side is at most _MAX_DIMENSION pixels.
     - Re-encodes as JPEG at _JPEG_QUALITY%.
 
-    This cuts the base64 payload from several MB to ~100-300 KB,
-    reducing latency and per-request token cost without hurting
-    license-plate readability.
+    Images that already satisfy all three conditions are returned untouched,
+    since a redundant JPEG round-trip only adds generation loss.
     """
     img = Image.open(BytesIO(image_bytes))
     try:
+        orientation = img.getexif().get(0x0112, 1)
+        if (
+            img.format == "JPEG"
+            and img.mode == "RGB"
+            and max(img.size) <= _MAX_DIMENSION
+            and orientation in (0, 1)
+        ):
+            return image_bytes
+
         img = ImageOps.exif_transpose(img)
 
         if img.mode in ("RGBA", "P"):
@@ -130,6 +139,7 @@ def analyze_vehicle_photo(image_bytes: bytes) -> VehicleInfo:
         }],
         response_format={"type": "json_object"},
         max_tokens=300,
+        temperature=0,
     )
 
     data = json.loads(response.choices[0].message.content)
