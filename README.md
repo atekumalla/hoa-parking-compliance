@@ -6,10 +6,16 @@ A Streamlit web application for HOA volunteers to track guest parking violations
 
 - 📝 Log vehicle sightings with license plate, tag number, make, and model
 - ⚡ Quick-select dropdown to auto-fill previously seen vehicles when adding entries
-- 📸 Optional photo uploads stored in Google Drive with monthly organization
+- � Built-in camera capture (rear camera, zoom, selectable quality) plus file upload
+- 🤖 Optional AI photo analysis that auto-fills plate, make, and model from a photo
+- 🖼️ Photos stored in Google Drive with monthly organization and an automatic timestamp stamp
 - 📊 Real-time scoreboard showing most frequent violators with dark-themed cards
+- 🏷️ Top-used parking tags over the last 90 days
+- 🚨 "Needs attention" list surfacing unwarned vehicles approaching the 9-day limit
 - ⚠️ Automated tracking of 9-day/30-day parking rule violations
 - 🔍 Vehicle history search by license plate, tag number, make, or model (with dropdowns)
+- 📤 Export all photos for a vehicle into a single Drive folder
+- 💾 Storage management: usage metrics and bulk photo cleanup by month or date range
 - 🚀 Quick-add and History buttons on each scoreboard card
 - 🎨 Color-coded visual indicators for warned and towed vehicles
 - 📅 Automatic monthly tab/folder creation
@@ -18,18 +24,24 @@ A Streamlit web application for HOA volunteers to track guest parking violations
 
 ## Parking Rules Enforced
 
-1. Every car must have an HOA issued placard or paper parking tag (or can be towed)
-2. Cars cannot be parked more than 9 unique days in any 30-day period
-3. First violation over 9 days requires one warning
-4. Continued parking in same 30-day period after warning = eligible for towing
-5. Future violations in different 30-day periods = eligible for towing (already warned)
+1. Every vehicle in a guest spot must display an HOA-issued placard or paper parking tag
+2. Vehicles without a valid tag or placard are subject to immediate towing, without warning
+3. Guest vehicles cannot be parked more than 9 unique days in any rolling 30-day period
+   (multiple sightings on the same calendar day count as one day)
+4. First violation over 9 days requires one written warning
+5. Continued parking in the same 30-day period after a warning = eligible for towing
+6. Future violations in a different 30-day period = eligible for towing, since a prior
+   warning carries forward permanently
 
 ## Prerequisites
 
-- Python 3.8 or higher
+- Python 3.11.6 (pinned in `runtime.txt`; 3.9+ works for local development)
 - Google Cloud Platform account (free tier is sufficient)
 - Google Sheet for data storage
 - Google Drive folder for photo storage
+- *(Optional)* Google OAuth client credentials — lets each user upload photos against
+  their own Drive quota instead of the service account's
+- *(Optional)* OpenAI API key — enables AI photo analysis
 
 ## Setup Instructions
 
@@ -127,10 +139,31 @@ If you're on a free personal Gmail account, Shared Drives are not available. As 
 
 2. Edit the `.env` file with your actual values:
    ```bash
+   # Required
    GOOGLE_SHEET_ID=your_actual_sheet_id_from_step_5
    GOOGLE_DRIVE_FOLDER_ID=your_actual_folder_id_from_step_6
    GOOGLE_APPLICATION_CREDENTIALS=service-account-key.json
+
+   # Optional
    SCOREBOARD_TOP_N=20
+   MEMORY_DEBUG=0
+   ```
+
+3. *(Optional)* To let users upload photos against their own Google Drive quota,
+   create an OAuth 2.0 Client ID (Web application) in **APIs & Services > Credentials**,
+   add your app URL as an authorized redirect URI, then add:
+   ```bash
+   GOOGLE_OAUTH_CLIENT_ID=your_oauth_client_id
+   GOOGLE_OAUTH_CLIENT_SECRET=your_oauth_client_secret
+   GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8501
+   ```
+   When these are set, a "Sign in with Google" control appears in the app header.
+   This sidesteps the service-account storage quota problem described in Step 6.
+
+4. *(Optional)* To enable AI photo analysis:
+   ```bash
+   OPENAI_API_KEY=your_openai_api_key
+   OPENAI_VISION_MODEL=gpt-4o-mini
    ```
 
 ### Step 8: Install Dependencies
@@ -170,17 +203,29 @@ The application will open in your default browser at `http://localhost:8501`
 1. Navigate to the **📝 Add Vehicle** tab
 2. **Quick Select**: Use the dropdown at the top to pick a previously seen vehicle — this auto-fills all fields
 3. Or manually enter the license plate and tag number (make/model are optional)
-4. Optionally upload a photo (max 10MB, any image format)
-5. Check **Warned** or **Towed** if applicable (timestamps are auto-captured)
-6. Click **Submit**
+4. Optionally attach a photo, either by:
+   - **📷 Camera** — opens the built-in capture view (rear camera by default, with zoom
+     controls and a Min/Mid/Max quality toggle that remembers your last choice)
+   - **📁 Upload** — jpg, jpeg, png, webp, heic, bmp, or gif, max 10MB
+5. If an OpenAI key is configured, click **🔍 Analyze with AI** to auto-fill the plate,
+   make, and model from the photo. If the detected plate matches an existing record,
+   the tag number is filled in from history too. Always verify the reading before submitting.
+6. Check **Warned** or **Towed** if applicable (timestamps are auto-captured)
+7. Click **Submit**
+
+> **Photo quality tip**: the **Mid** camera preset gives the best results for AI plate
+> reading. **Min** captures below the resolution the analysis pipeline can use, and
+> **Max** is slower with no meaningful accuracy gain.
 
 ### Scoreboard
 
 1. View the **📊 Scoreboard** tab to see the top vehicles in the last 30 days
-2. Cards are color-coded: dark gray (active), dark amber (warned), dark red (towed)
-3. Each card shows unique days parked, last seen date, and status
-4. Click **➕ Quick Add** to log a new sighting for that vehicle (pre-filled)
-5. Click **🔍 History** to jump directly to that vehicle's full history
+2. The tab opens with **🏷️ Top Used Tags** (last 90 days) and a **🚨 Needs Attention**
+   list of unwarned vehicles approaching the 9-day limit
+3. Vehicle cards are color-coded: dark gray (active), dark amber (warned), dark red (towed)
+4. Each card shows unique days parked, last seen date, and status
+5. Click **➕ Quick Add** to log a new sighting for that vehicle (pre-filled)
+6. Click **🔍 History** to jump directly to that vehicle's full history
 
 ### Vehicle History
 
@@ -192,12 +237,26 @@ The application will open in your default browser at `http://localhost:8501`
    - **Model** — type or pick from dropdown
 3. Multiple filters can be combined (e.g., search by tag AND make)
 4. View all historical entries, warnings, tows, and photos for matching vehicles
+5. Click **📤 Export Photos** to collect every photo for a vehicle into a single Drive
+   folder. This creates shortcuts rather than copies, so it consumes no extra storage.
+   Requires Google sign-in.
+
+### Storage
+
+The **💾 Storage** tab manages the Drive photo archive:
+
+1. View total usage, file counts, and a per-month breakdown
+2. Delete photos in bulk by month or by date range (each deletion asks for confirmation)
+3. Use **Refresh Cache** if the numbers look stale
+
+> ⚠️ Deletions are permanent. Photo URLs already written to the Google Sheet will
+> stop resolving for any photos you remove.
 
 ### Rules
 
-The **📜 Rules** tab displays all parking enforcement rules including:
+The **📜 Rules** tab displays all six parking enforcement rules including:
 - Tag/placard requirements
-- The 9-day/30-day rule
+- The 9-day/30-day rolling window rule
 - Warning and towing policy with a summary table
 
 ### Refreshing Data
@@ -228,14 +287,35 @@ Each monthly tab (e.g., "Jan-2026") contains the following columns:
 
 ```
 HOA Parking Photos/
-├── Jan-2026/
+├── 2026-01/
 │   ├── ABC123_TAG001_20260107_143022.jpg
 │   ├── XYZ789_TAG002_20260107_145533.jpg
 │   └── ...
-├── Feb-2026/
+├── 2026-02/
 │   └── ...
 └── ...
 ```
+
+Photos are stamped with a PST timestamp before upload and capped at 2048px to keep
+memory use predictable on small containers.
+
+## Deployment
+
+The app runs on [Render](https://render.com/) via `start.sh`. See
+[DEPLOY_RENDER.md](DEPLOY_RENDER.md) for full instructions.
+
+Key differences from local development:
+
+- The service account JSON is passed as a single `GOOGLE_CREDENTIALS_JSON` environment
+  variable rather than a file. `start.sh` writes it to a temp file at boot and points
+  `GOOGLE_APPLICATION_CREDENTIALS` at it, so no credentials live in the repo.
+- `GOOGLE_OAUTH_REDIRECT_URI` must match your deployed URL (e.g. `https://your-app.onrender.com`)
+  and be registered as an authorized redirect URI in Google Cloud Console.
+- `start.sh` sets `MALLOC_ARENA_MAX=2` and `PYTHONMALLOC=malloc` to limit glibc arena
+  fragmentation, which matters on a 512MB instance.
+- Uploads are capped at 10MB via `--server.maxUploadSize=10`.
+- Set `MEMORY_DEBUG=1` to log RSS and peak memory at key checkpoints when diagnosing
+  out-of-memory restarts.
 
 ## Troubleshooting
 
@@ -268,12 +348,37 @@ HOA Parking Photos/
 - **Error**: Missing configuration
   - **Solution**: Ensure `.env` file exists in the project root directory
 
+### AI Analysis Unavailable
+
+- **Symptom**: The **🔍 Analyze with AI** button does not appear
+  - **Solution**: Set `OPENAI_API_KEY` in your `.env` and restart the app. The button is
+    hidden entirely when no key is configured.
+
+- **Symptom**: The plate is read incorrectly
+  - **Solution**: Set the camera quality toggle to **Mid**, get closer or use the zoom
+    control so the plate fills more of the frame, and avoid steep angles. You can also
+    try a stronger model by setting `OPENAI_VISION_MODEL` (e.g. `gpt-4o` or `gpt-4.1`).
+    Always verify AI-filled fields before submitting.
+
+### Camera Not Working
+
+- **Symptom**: Camera view is blank or permission is denied
+  - **Solution**: Browsers only allow camera access over HTTPS or on `localhost`. If you
+    are accessing the app over plain HTTP on a LAN IP, the camera will not start — use
+    the file upload option or deploy behind HTTPS.
+  - The zoom slider only appears when the device reports zoom capability; many desktop
+    webcams do not.
+
 ## Security Notes
 
 - Never commit your `service-account-key.json` or `.env` file to version control
-- The `.gitignore` file already excludes these files
+- The `.gitignore` file already excludes these files (including a `*service-account*.json` glob)
+- In production, pass credentials as environment variables instead of files — see Deployment
 - Keep your service account credentials secure
 - Limit service account permissions to only the specific Sheet and Drive folder needed
+- OAuth refresh tokens are stored in browser `localStorage`, with a URL query parameter
+  as a fallback. Avoid sharing a URL containing an `?rt=` parameter, since it grants
+  Drive upload access to your account.
 
 ## License
 
