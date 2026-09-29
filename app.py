@@ -13,6 +13,7 @@ import resource
 import sys
 from datetime import datetime, timedelta
 from io import BytesIO
+from typing import Optional
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import streamlit as st
@@ -236,22 +237,24 @@ def load_data(force_refresh=False):
             st.session_state.data_loaded = False
 
 
-def stamp_photo_with_timestamp(image_bytes: bytes) -> bytes:
+def stamp_photo_with_timestamp(image_bytes: bytes, stamp_datetime: Optional[datetime] = None) -> bytes:
     """
     Add a white timestamp to the bottom-right corner of a photo.
     Format: 'Jun 18, 2026 6:17:52 AM'
     
-    Used only for photos taken via the in-app camera.
+    Used for in-app camera captures (current time) and, optionally, for
+    uploaded photos when the user opts in — in which case stamp_datetime
+    is the photo's EXIF capture time rather than now.
     
     Args:
         image_bytes: Raw image bytes.
+        stamp_datetime: Date/time to render. Defaults to now (Pacific time).
     
     Returns:
         New image bytes with timestamp overlay (JPG).
     """
     _log_memory("stamp_photo:start")
-    pst = ZoneInfo("America/Los_Angeles")
-    now = datetime.now(pst)
+    now = stamp_datetime or datetime.now(ZoneInfo("America/Los_Angeles"))
     timestamp_text = now.strftime("%b %d, %Y %-I:%M:%S %p")
     
     img = Image.open(BytesIO(image_bytes))
@@ -378,6 +381,37 @@ def _fix_camera_orientation(image_bytes: bytes) -> bytes:
         # Explicitly close the image to free memory
         img.close()
         gc.collect()
+
+
+def _extract_photo_datetime(image_bytes: bytes):
+    """Read the original capture date/time from a photo's EXIF metadata.
+
+    Must be called on the raw upload bytes before _downscale_for_session
+    re-encodes the image, since re-encoding strips EXIF tags.
+
+    Returns a naive datetime (camera's local time), or None if the image
+    has no DateTimeOriginal/DateTime EXIF tag (e.g. screenshots or photos
+    that had metadata stripped).
+    """
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        try:
+            exif = img.getexif()
+            date_str = None
+            try:
+                exif_ifd = exif.get_ifd(0x8769)  # Exif IFD pointer
+                date_str = exif_ifd.get(0x9003) or exif_ifd.get(0x9004)  # DateTimeOriginal / DateTimeDigitized
+            except Exception:
+                pass
+            if not date_str:
+                date_str = exif.get(0x0132)  # IFD0 DateTime (fallback)
+            if not date_str:
+                return None
+            return datetime.strptime(date_str.strip(), "%Y:%m:%d %H:%M:%S")
+        finally:
+            img.close()
+    except Exception:
+        return None
 
 
 def get_known_vehicles():
@@ -578,6 +612,8 @@ def _clear_entry_state():
                 'prefill_model',
                 'attached_photo_bytes', 'attached_photo_name',
                 'attached_photo_from_camera', 'ai_analysis_done',
+                'attached_photo_exif_date', 'attached_photo_use_exif_date',
+                'attached_photo_add_watermark',
                 'pending_duplicate_entry']:
         st.session_state.pop(key, None)
     st.session_state['qs_reset_counter'] = st.session_state.get('qs_reset_counter', 0) + 1
@@ -600,6 +636,7 @@ def _process_and_save_entry(entry_data):
     warned_date = entry_data['warned_date']
     towed = entry_data['towed']
     towed_date = entry_data['towed_date']
+    entry_datetime = entry_data.get('entry_datetime')
 
     # Get/increment warning count
     warning_count = st.session_state.compliance_engine.get_warning_count(normalized_plate)
@@ -613,10 +650,14 @@ def _process_and_save_entry(entry_data):
     upload_name = st.session_state.get('attached_photo_name', 'photo.jpg')
 
     if upload_bytes is not None:
-        # Prepare photo (stamping if from camera)
-        if st.session_state.get('attached_photo_from_camera'):
+        # Stamp camera photos automatically; uploads only if the user opted in
+        should_stamp = (
+            st.session_state.get('attached_photo_from_camera')
+            or st.session_state.get('attached_photo_add_watermark')
+        )
+        if should_stamp:
             try:
-                upload_bytes = stamp_photo_with_timestamp(upload_bytes)
+                upload_bytes = stamp_photo_with_timestamp(upload_bytes, stamp_datetime=entry_datetime)
             except Exception:
                 pass  # If stamping fails, upload original
 
@@ -624,7 +665,8 @@ def _process_and_save_entry(entry_data):
             oauth_creds = get_user_credentials()
             success, url, error = st.session_state.drive_manager.upload_photo(
                 upload_bytes, normalized_plate, tag_number, upload_name,
-                oauth_credentials=oauth_creds
+                oauth_credentials=oauth_creds,
+                entry_datetime=entry_datetime
             )
             if success:
                 photo_url = url
@@ -644,7 +686,8 @@ def _process_and_save_entry(entry_data):
             warning_count=warning_count,
             towed=towed,
             towed_date=towed_date,
-            photo_url=photo_url
+            photo_url=photo_url,
+            entry_datetime=entry_datetime
         )
 
         if success:
@@ -655,8 +698,12 @@ def _process_and_save_entry(entry_data):
             # everything from Google Sheets (saves an API round-trip and
             # avoids a memory spike from rebuilding all DataFrames).
             pst = ZoneInfo("America/Los_Angeles")
+            display_timestamp = (
+                entry_datetime.strftime("%Y-%m-%d %H:%M:%S") if entry_datetime
+                else datetime.now(pst).strftime("%Y-%m-%d %H:%M:%S")
+            )
             new_row = pd.DataFrame([{
-                'Timestamp': pd.Timestamp(datetime.now(pst).strftime("%Y-%m-%d %H:%M:%S")),
+                'Timestamp': pd.Timestamp(display_timestamp),
                 'License Plate': normalized_plate,
                 'Tag Number': tag_number,
                 'Make': make,
@@ -767,10 +814,36 @@ def add_vehicle_entry_form():
         )
         if uploaded_photo is not None:
             raw_bytes = uploaded_photo.getvalue()
+            # Extract EXIF capture date before downscaling strips metadata
+            st.session_state['attached_photo_exif_date'] = _extract_photo_datetime(raw_bytes)
             # Only compress if photo exceeds 10 MB; small uploads pass through unchanged.
             st.session_state['attached_photo_bytes'] = _downscale_for_session(raw_bytes)
             st.session_state['attached_photo_name'] = uploaded_photo.name
             st.session_state['attached_photo_from_camera'] = False
+
+        exif_date = st.session_state.get('attached_photo_exif_date')
+        if exif_date:
+            st.info(
+                f"📅 This photo's metadata shows it was taken on "
+                f"**{exif_date.strftime('%B %d, %Y at %I:%M %p')}**."
+            )
+            date_choice_key = f"photo_date_choice_{st.session_state.get('photo_reset_counter', 0)}"
+            date_choice = st.radio(
+                "Which date should this entry use?",
+                [f"Use photo date ({exif_date.strftime('%m/%d/%Y')})", "Use current date"],
+                key=date_choice_key,
+                horizontal=True
+            )
+            st.session_state['attached_photo_use_exif_date'] = date_choice.startswith("Use photo date")
+        else:
+            st.session_state['attached_photo_use_exif_date'] = False
+
+        watermark_key = f"photo_watermark_{st.session_state.get('photo_reset_counter', 0)}"
+        st.session_state['attached_photo_add_watermark'] = st.checkbox(
+            "🖊️ Stamp the photo with the entry date/time",
+            key=watermark_key,
+            help="Adds a visible date/time watermark to the photo, matching the date chosen above."
+        )
     
     # Show preview and actions when a photo is attached
     if st.session_state.get('attached_photo_bytes'):
@@ -927,10 +1000,15 @@ def add_vehicle_entry_form():
             # Normalize license plate
             normalized_plate = st.session_state.compliance_engine.normalize_license_plate(license_plate)
             
-            # Prepare timestamps (PST)
+            # Prepare timestamps — use the photo's EXIF date if the user opted
+            # to backdate this entry (historical upload), otherwise now (PST).
             pst_now = datetime.now(ZoneInfo("America/Los_Angeles"))
-            warned_date = pst_now.strftime("%Y-%m-%d %H:%M:%S") if warned else None
-            towed_date = pst_now.strftime("%Y-%m-%d %H:%M:%S") if towed else None
+            entry_datetime = None
+            if st.session_state.get('attached_photo_use_exif_date'):
+                entry_datetime = st.session_state.get('attached_photo_exif_date')
+            entry_stamp = entry_datetime or pst_now
+            warned_date = entry_stamp.strftime("%Y-%m-%d %H:%M:%S") if warned else None
+            towed_date = entry_stamp.strftime("%Y-%m-%d %H:%M:%S") if towed else None
             
             entry_data = {
                 'normalized_plate': normalized_plate,
@@ -941,6 +1019,7 @@ def add_vehicle_entry_form():
                 'warned_date': warned_date,
                 'towed': towed,
                 'towed_date': towed_date,
+                'entry_datetime': entry_datetime,
             }
             
             # Check for duplicate entry today
@@ -1268,6 +1347,11 @@ def show_quick_add_modal():
             type=['jpg', 'jpeg', 'png', 'heic', 'webp', 'bmp', 'gif'],
             help="Max file size: 10MB"
         )
+        use_exif_date = st.checkbox(
+            "Use photo's date/time from its metadata (if available) instead of today's date",
+            value=True,
+            help="For historical photos — backdates this entry to when the photo was taken."
+        )
         
         col_submit, col_cancel = st.columns([1, 1])
         
@@ -1295,21 +1379,28 @@ def show_quick_add_modal():
             
             # Handle photo upload
             photo_url = None
+            entry_datetime = None
             if photo_file is not None:
                 with st.spinner("Uploading photo..."):
                     file_bytes = photo_file.read()
+                    if use_exif_date:
+                        entry_datetime = _extract_photo_datetime(file_bytes)
                     oauth_creds = get_user_credentials()
                     success, url, error = st.session_state.drive_manager.upload_photo(
                         file_bytes,
                         vehicle['license_plate'],
                         vehicle['tag_number'],
                         photo_file.name,
-                        oauth_credentials=oauth_creds
+                        oauth_credentials=oauth_creds,
+                        entry_datetime=entry_datetime
                     )
                     
                     if success:
                         photo_url = url
-                        st.success("✅ Photo uploaded")
+                        if entry_datetime:
+                            st.success(f"✅ Photo uploaded (dated {entry_datetime.strftime('%m/%d/%Y')})")
+                        else:
+                            st.success("✅ Photo uploaded")
                     else:
                         st.error(f"❌ Photo failed: {error}")
             
@@ -1325,7 +1416,8 @@ def show_quick_add_modal():
                     warning_count=warning_count,
                     towed=towed,
                     towed_date=towed_date,
-                    photo_url=photo_url
+                    photo_url=photo_url,
+                    entry_datetime=entry_datetime
                 )
                 
                 if success:
@@ -1334,8 +1426,12 @@ def show_quick_add_modal():
 
                     # Update in-memory DataFrames locally instead of re-fetching
                     pst = ZoneInfo("America/Los_Angeles")
+                    display_timestamp = (
+                        entry_datetime.strftime("%Y-%m-%d %H:%M:%S") if entry_datetime
+                        else datetime.now(pst).strftime("%Y-%m-%d %H:%M:%S")
+                    )
                     new_row = pd.DataFrame([{
-                        'Timestamp': pd.Timestamp(datetime.now(pst).strftime("%Y-%m-%d %H:%M:%S")),
+                        'Timestamp': pd.Timestamp(display_timestamp),
                         'License Plate': vehicle['license_plate'],
                         'Tag Number': vehicle['tag_number'],
                         'Make': vehicle['make'],

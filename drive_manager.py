@@ -201,7 +201,8 @@ class DriveManager:
         license_plate: str,
         tag_number: str,
         original_filename: Optional[str] = None,
-        oauth_credentials: Optional[OAuthCredentials] = None
+        oauth_credentials: Optional[OAuthCredentials] = None,
+        entry_datetime: Optional[datetime] = None
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Upload a photo to the appropriate monthly folder.
@@ -216,6 +217,8 @@ class DriveManager:
             tag_number: Tag number for filename.
             original_filename: Original filename (unused, kept for API compat).
             oauth_credentials: User's OAuth credentials for upload.
+            entry_datetime: Date/time to file this photo under (e.g. a photo's
+                EXIF capture date for historical uploads). Defaults to now.
 
         Returns:
             Tuple of (success, photo_url, error_message)
@@ -239,7 +242,7 @@ class DriveManager:
             # Use OAuth service for the upload
             oauth_service = self._get_oauth_service(oauth_credentials)
 
-            now = datetime.now()
+            now = entry_datetime or datetime.now()
             year_month = now.strftime('%Y-%m')
             monthly_folder_id = self._get_or_create_monthly_folder(year_month, oauth_service)
 

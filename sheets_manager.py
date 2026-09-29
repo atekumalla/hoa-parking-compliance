@@ -130,7 +130,8 @@ class SheetsManager:
         warning_count: int = 0,
         towed: bool = False,
         towed_date: Optional[str] = None,
-        photo_url: Optional[str] = None
+        photo_url: Optional[str] = None,
+        entry_datetime: Optional[datetime] = None
     ) -> bool:
         """
         Append a new parking entry to the current month's tab.
@@ -146,15 +147,20 @@ class SheetsManager:
             towed: Whether vehicle was towed
             towed_date: Date/time when towed
             photo_url: Google Drive URL to photo
+            entry_datetime: Date/time to backdate this entry to (e.g. a photo's
+                EXIF capture date for historical uploads). Defaults to now.
             
         Returns:
             True if successful, False otherwise
         """
         try:
-            current_tab = self.get_month_tab_name()
+            current_tab = self.get_month_tab_name(entry_datetime)
             worksheet = self.get_or_create_tab(current_tab)
             
-            timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S")
+            if entry_datetime is not None:
+                timestamp = entry_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S")
             
             row = [
                 timestamp,
