@@ -275,7 +275,7 @@
 
         function setupZoom(mediaStream) {
             var track = mediaStream.getVideoTracks()[0];
-            if (!track) { zoomRow.classList.add('hidden'); return; }
+            if (!track) { zoomRow.classList.add('hidden'); updateHeight(); return; }
 
             var capabilities = track.getCapabilities ? track.getCapabilities() : {};
             if (capabilities.zoom) {
@@ -300,8 +300,10 @@
                     return;
                 }
             }
-            // Zoom not supported — hide slider
+            // Zoom not supported — hide slider (shrink the iframe back down since
+            // it was previously sized to fit the slider, e.g. after a camera flip)
             zoomRow.classList.add('hidden');
+            updateHeight();
         }
 
         zoomSlider.addEventListener('input', function() {
