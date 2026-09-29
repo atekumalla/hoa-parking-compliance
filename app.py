@@ -2112,24 +2112,26 @@ def main():
         show_vehicle_history()
         return
     
-    # Create tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📝 Add Vehicle", "📊 Scoreboard", "🔍 Vehicle History", "💾 Storage", "📜 Rules"
-    ])
-    
-    with tab1:
+    # Section navigation — st.tabs() always resets to the first tab on every
+    # rerun (e.g. clicking Search), since it has no way to persist the active
+    # tab. A keyed radio's value is stored in session_state, so it survives
+    # reruns triggered by widgets like the Vehicle History search button.
+    nav_options = ["📝 Add Vehicle", "📊 Scoreboard", "🔍 Vehicle History", "💾 Storage", "📜 Rules"]
+    active_section = st.radio(
+        "Section", nav_options, horizontal=True, key="active_nav_section",
+        label_visibility="collapsed"
+    )
+    st.markdown("---")
+
+    if active_section == "📝 Add Vehicle":
         add_vehicle_entry_form()
-    
-    with tab2:
+    elif active_section == "📊 Scoreboard":
         show_scoreboard()
-    
-    with tab3:
+    elif active_section == "🔍 Vehicle History":
         show_vehicle_history()
-    
-    with tab4:
+    elif active_section == "💾 Storage":
         show_storage_management()
-    
-    with tab5:
+    elif active_section == "📜 Rules":
         show_rules()
     
     # Footer
