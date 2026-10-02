@@ -13,6 +13,11 @@ const QUALITY_PRESETS: Record<Quality, { width: number; height: number; megapixe
   max: { width: 4032, height: 3024, megapixels: '12MP' },
 }
 
+// Quick zoom presets, same idea as the old Streamlit camera component but
+// extended up to 8x since that's the range most commonly used in practice.
+const ZOOM_PRESETS = [1, 2, 3, 4, 6, 8]
+const ZOOM_PRESET_EPSILON = 0.05
+
 const QUALITY_STORAGE_KEY = 'hoaCameraQuality'
 
 function loadSavedQuality(): Quality {
@@ -130,6 +135,12 @@ export default function CameraCapture({ onCapture }: Props) {
     track.applyConstraints({ advanced: [constraint] }).catch(() => {})
   }
 
+  function stepZoom(direction: 1 | -1) {
+    if (!zoom) return
+    const delta = (zoom.max - zoom.min) / 20
+    applyZoom(zoom.value + delta * direction)
+  }
+
   function changeQuality(q: Quality) {
     if (q === quality) return
     setQuality(q)
@@ -193,27 +204,50 @@ export default function CameraCapture({ onCapture }: Props) {
 
       {active && (
         <>
+          {zoom && (
+            <div className="camera-zoom-row">
+              <div className="camera-zoom-slider-row">
+                <span className="camera-zoom-label">🔍 {zoom.value.toFixed(1)}×</span>
+                <input
+                  type="range"
+                  className="camera-zoom-slider"
+                  min={zoom.min}
+                  max={zoom.max}
+                  step={zoom.step}
+                  value={zoom.value}
+                  onChange={(e) => applyZoom(parseFloat(e.target.value))}
+                  aria-label="Camera zoom"
+                />
+              </div>
+              <div className="camera-zoom-presets">
+                <button type="button" className="camera-zoom-step-btn" onClick={() => stepZoom(-1)} aria-label="Zoom out">−</button>
+                {ZOOM_PRESETS.filter((p) => p <= zoom.max).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className={`camera-zoom-preset-btn ${Math.abs(zoom.value - p) < ZOOM_PRESET_EPSILON ? 'active' : ''}`}
+                    onClick={() => applyZoom(p)}
+                  >
+                    {p}×
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={`camera-zoom-preset-btn ${Math.abs(zoom.value - zoom.max) < ZOOM_PRESET_EPSILON ? 'active' : ''}`}
+                  onClick={() => applyZoom(zoom.max)}
+                >
+                  Max
+                </button>
+                <button type="button" className="camera-zoom-step-btn" onClick={() => stepZoom(1)} aria-label="Zoom in">+</button>
+              </div>
+            </div>
+          )}
+
           <div className="row camera-controls">
             <button type="button" className="btn" onClick={snap}>📷 Capture</button>
             <button type="button" className="btn secondary" onClick={flip}>🔄 Flip</button>
             <button type="button" className="btn secondary" onClick={stop}>Cancel</button>
           </div>
-
-          {zoom && (
-            <div className="camera-zoom-row">
-              <span className="camera-zoom-label">🔍 {zoom.value.toFixed(1)}×</span>
-              <input
-                type="range"
-                className="camera-zoom-slider"
-                min={zoom.min}
-                max={zoom.max}
-                step={zoom.step}
-                value={zoom.value}
-                onChange={(e) => applyZoom(parseFloat(e.target.value))}
-                aria-label="Camera zoom"
-              />
-            </div>
-          )}
 
           <div className="camera-quality-row">
             <span className="camera-quality-label">Quality:</span>

@@ -6,6 +6,7 @@ import CollapsibleSection from '../components/CollapsibleSection'
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal'
 import EmptyState from '../components/EmptyState'
 import Skeleton from '../components/Skeleton'
+import VehicleTypeahead from '../components/VehicleTypeahead'
 
 interface PrefillState {
   license_plate?: string
@@ -101,14 +102,11 @@ export default function AddVehiclePage() {
     }
   }
 
-  function pickKnownVehicle(label: string) {
-    const v = knownVehicles.find((k) => k.label === label)
-    if (v) {
-      setLicensePlate(v.license_plate)
-      setTagNumber(v.tag_number)
-      setMake(v.make)
-      setModel(v.model)
-    }
+  function pickKnownVehicle(v: KnownVehicle) {
+    setLicensePlate(v.license_plate)
+    setTagNumber(v.tag_number)
+    setMake(v.make)
+    setModel(v.model)
   }
 
   function onFileSelected(file: File) {
@@ -325,12 +323,12 @@ export default function AddVehiclePage() {
         {knownVehicles.length > 0 && (
           <div className="field">
             <label htmlFor="known-vehicle">Quick select a known vehicle</label>
-            <select id="known-vehicle" onChange={(e) => e.target.value && pickKnownVehicle(e.target.value)} defaultValue="">
-              <option value="">Auto-fill from a previously seen vehicle&hellip;</option>
-              {knownVehicles.map((v) => (
-                <option key={v.label} value={v.label}>{v.label}</option>
-              ))}
-            </select>
+            <VehicleTypeahead
+              id="known-vehicle"
+              vehicles={knownVehicles}
+              placeholder="Type to search a previously seen vehicle…"
+              onSelect={pickKnownVehicle}
+            />
           </div>
         )}
 

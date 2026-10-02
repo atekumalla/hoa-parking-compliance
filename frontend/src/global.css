@@ -334,9 +334,15 @@ hr {
 
 .camera-zoom-row {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.camera-zoom-slider-row {
+  display: flex;
   align-items: center;
   gap: var(--space-3);
-  margin-top: var(--space-3);
 }
 
 .camera-zoom-label {
@@ -352,6 +358,37 @@ hr {
   accent-color: var(--accent-strong);
   height: 32px;
   cursor: pointer;
+}
+
+.camera-zoom-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: center;
+}
+
+.camera-zoom-preset-btn, .camera-zoom-step-btn {
+  padding: 0.4em 0.75em;
+  min-width: 44px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.camera-zoom-preset-btn.active {
+  background: var(--accent);
+  border-color: var(--ink);
+  color: var(--accent-ink);
+}
+
+.camera-zoom-step-btn {
+  font-size: var(--text-md);
+  font-weight: 700;
 }
 
 .camera-quality-row {
@@ -571,6 +608,48 @@ input::placeholder { color: var(--ink-3); opacity: 1; }
 }
 
 .row > .field { flex: 1; min-width: 200px; margin-bottom: 0; }
+
+/* Typeahead — a text input that narrows a dropdown of matches as you type,
+   instead of a plain <select> you must open to search. */
+.typeahead {
+  position: relative;
+}
+
+.typeahead-list {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--paper-raised);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px var(--overlay);
+}
+
+.typeahead-list li {
+  padding: 0.5em 0.7em;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.typeahead-list li:hover,
+.typeahead-list li.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.typeahead-list li.empty {
+  color: var(--ink-3);
+  cursor: default;
+}
+.typeahead-list li.empty:hover { background: transparent; color: var(--ink-3); }
 
 /* Checkbox rows read as ballot-style options, not bare native squares */
 .check-row {
