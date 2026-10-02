@@ -1,0 +1,699 @@
+/* ==========================================================================
+   Design system — "Citation Booklet"
+   A municipal parking-enforcement ticket-book aesthetic: warm paper,
+   ink-black type, one safety-amber accent, citation-red for violations.
+   Status badges read as rubber stamps; plates render like real placards.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* -- Color: warm paper + ink, single amber accent, muted status hues -- */
+  --paper: oklch(96% 0.016 92);
+  --paper-raised: oklch(99% 0.008 92);
+  --paper-sunken: oklch(92% 0.02 92);
+  --paper-dot: oklch(90% 0.02 92);
+
+  --ink: oklch(19% 0.025 55);
+  --ink-2: oklch(38% 0.022 55);
+  --ink-3: oklch(56% 0.018 60);
+
+  --line: oklch(84% 0.02 70);
+  --line-strong: oklch(70% 0.03 70);
+
+  --accent: oklch(74% 0.16 65);
+  --accent-strong: oklch(60% 0.18 45);
+  --accent-ink: oklch(20% 0.03 55);
+
+  --danger: oklch(48% 0.19 25);
+  --danger-bg: oklch(93% 0.045 25);
+  --danger-ink: oklch(32% 0.15 25);
+
+  --warn: oklch(78% 0.13 85);
+  --warn-bg: oklch(93% 0.075 88);
+  --warn-ink: oklch(34% 0.09 75);
+
+  --ok: oklch(50% 0.1 150);
+  --ok-bg: oklch(93% 0.045 150);
+  --ok-ink: oklch(30% 0.08 150);
+
+  --overlay: oklch(20% 0.02 55 / 0.55);
+  --shimmer: oklch(100% 0 0 / 0.5);
+
+  /* -- Type -- */
+  --font-display: 'Anton', 'Arial Narrow', sans-serif;
+  --font-body: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-data: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 1rem;
+  --text-md: 1.0625rem;
+  --text-lg: clamp(1.2rem, 1.1rem + 0.4vw, 1.4rem);
+  --text-xl: clamp(1.5rem, 1.25rem + 1vw, 2rem);
+  --text-display: clamp(2rem, 1.5rem + 2.2vw, 3.25rem);
+
+  /* -- Space (fluid-ish scale) -- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: clamp(3rem, 2rem + 4vw, 5rem);
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 140ms;
+  --duration-base: 220ms;
+}
+
+/* "Night Patrol" — same citation-booklet system, inverted for low-light use.
+   Same hue family throughout (warm ink/amber), only lightness flips, so
+   nothing needs a second design language. */
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --paper: oklch(21% 0.016 55);
+  --paper-raised: oklch(26% 0.018 55);
+  --paper-sunken: oklch(17% 0.016 55);
+  --paper-dot: oklch(27% 0.018 55);
+
+  --ink: oklch(93% 0.012 85);
+  --ink-2: oklch(78% 0.016 85);
+  --ink-3: oklch(60% 0.016 85);
+
+  --line: oklch(38% 0.02 70);
+  --line-strong: oklch(48% 0.03 70);
+
+  --accent: oklch(78% 0.15 70);
+  --accent-strong: oklch(72% 0.17 55);
+  --accent-ink: oklch(15% 0.02 55);
+
+  --danger: oklch(68% 0.18 25);
+  --danger-bg: oklch(30% 0.07 25);
+  --danger-ink: oklch(88% 0.05 25);
+
+  --warn: oklch(80% 0.12 85);
+  --warn-bg: oklch(32% 0.06 85);
+  --warn-ink: oklch(90% 0.04 85);
+
+  --ok: oklch(72% 0.1 150);
+  --ok-bg: oklch(28% 0.05 150);
+  --ok-ink: oklch(88% 0.04 150);
+
+  --overlay: oklch(0% 0 0 / 0.6);
+  --shimmer: oklch(60% 0.02 55 / 0.4);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  background-image: radial-gradient(var(--paper-dot) 1px, transparent 1px);
+  background-size: 3px 3px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* -- Focus -- */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* -- Typography -- */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  margin: 0 0 var(--space-3);
+  text-wrap: balance;
+}
+
+h2 { font-size: var(--text-xl); text-transform: uppercase; letter-spacing: 0.02em; }
+h3 { font-size: var(--text-lg); text-transform: uppercase; letter-spacing: 0.02em; color: var(--ink-2); }
+
+p { margin: 0 0 var(--space-3); max-width: 68ch; color: var(--ink-2); }
+
+a {
+  color: var(--accent-strong);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+}
+a:hover { color: var(--ink); }
+
+hr {
+  border: none;
+  border-top: 1px dashed var(--line-strong);
+  margin: var(--space-5) 0;
+}
+
+/* License plates render like a real stamped placard — the one deliberate
+   use of monospace in this UI, because plates genuinely are monospaced. */
+.plate {
+  display: inline-block;
+  font-family: var(--font-data);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 0.1em 0.45em;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+}
+
+.eyebrow {
+  display: block;
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: var(--space-2);
+}
+
+/* ==========================================================================
+   Layout shell + masthead
+   ========================================================================== */
+
+.app-container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 var(--space-5) var(--space-8);
+}
+
+.masthead {
+  position: relative;
+  padding: var(--space-6) 0 var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.masthead::after {
+  content: '';
+  display: block;
+  height: 6px;
+  margin-top: var(--space-5);
+  background: repeating-linear-gradient(-45deg, var(--accent) 0 10px, var(--ink) 10px 20px);
+}
+
+.masthead h1 {
+  font-size: var(--text-display);
+  line-height: 0.95;
+  margin: 0;
+}
+
+.masthead-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  align-items: baseline;
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.masthead-meta a { font-weight: 600; }
+
+.masthead-toggle {
+  position: absolute;
+  top: var(--space-6);
+  right: 0;
+}
+
+@media (max-width: 640px) {
+  .masthead-toggle { position: static; margin-bottom: var(--space-4); }
+}
+
+/* -- Nav: booklet tabs, not pills -- */
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-6);
+  border-bottom: 2px solid var(--ink);
+}
+
+.nav a {
+  position: relative;
+  padding: var(--space-3) var(--space-4);
+  text-decoration: none;
+  color: var(--ink-2);
+  font-family: var(--font-data);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  border-bottom: none;
+  transition: color var(--duration-fast) var(--ease-out-expo), background var(--duration-fast) var(--ease-out-expo);
+}
+
+.nav a:hover { color: var(--ink); background: var(--paper-sunken); }
+
+.nav a.active {
+  color: var(--ink);
+  background: var(--paper-raised);
+  border-color: var(--ink);
+  border-bottom: 2px solid var(--paper-raised);
+  margin-bottom: -2px;
+}
+
+/* ==========================================================================
+   Panels (section containers) — flat, hairline-bordered, never nested
+   ========================================================================== */
+
+.card {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+  animation: rise var(--duration-base) var(--ease-out-expo) both;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.section-divider {
+  border: none;
+  height: 1px;
+  margin: var(--space-5) 0;
+  background-image: linear-gradient(to right, var(--line-strong) 60%, transparent 0%);
+  background-position: bottom;
+  background-size: 8px 1px;
+  background-repeat: repeat-x;
+}
+
+/* ==========================================================================
+   Buttons — one clear primary per view; ghost/secondary for the rest
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  letter-spacing: 0.01em;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
+  padding: 0.6em 1.1em;
+  min-height: 44px;
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out-expo),
+              color var(--duration-fast) var(--ease-out-expo),
+              transform var(--duration-fast) var(--ease-out-expo),
+              border-color var(--duration-fast) var(--ease-out-expo);
+}
+
+.btn:hover { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--paper); }
+.btn:active { transform: translateY(1px); }
+
+.btn.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+.btn.secondary:hover { background: var(--paper-sunken); border-color: var(--ink); color: var(--ink); }
+
+.btn.danger {
+  background: transparent;
+  color: var(--danger-ink);
+  border-color: var(--danger);
+}
+.btn.danger:hover { background: var(--danger); border-color: var(--danger); color: var(--paper); }
+
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+.btn.active {
+  background: var(--accent);
+  border-color: var(--ink);
+  color: var(--accent-ink);
+}
+
+a.btn { text-decoration: none; }
+
+/* ==========================================================================
+   Forms
+   ========================================================================== */
+
+label {
+  display: block;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: var(--space-2);
+}
+
+input[type="text"], input[type="date"], input[type="file"], select, textarea {
+  background: var(--paper-raised);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: var(--font-body);
+  padding: 0.55em 0.7em;
+  font-size: var(--text-base);
+  width: 100%;
+  min-height: 44px;
+  transition: border-color var(--duration-fast) var(--ease-out-expo);
+}
+
+input[type="text"]:hover, select:hover { border-color: var(--ink-3); }
+
+input[type="text"]:focus-visible, input[type="date"]:focus-visible, select:focus-visible {
+  border-color: var(--accent-strong);
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 1px;
+}
+
+input::placeholder { color: var(--ink-3); opacity: 1; }
+
+.field { margin-bottom: var(--space-4); }
+
+.row {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.row > .field { flex: 1; min-width: 200px; margin-bottom: 0; }
+
+/* Checkbox rows read as ballot-style options, not bare native squares */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+  cursor: pointer;
+}
+.check-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   Stamps (status badges) — rotated, inked, not soft rounded pills
+   ========================================================================== */
+
+.badge, .stamp {
+  display: inline-block;
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.2em 0.6em;
+  border: 1.5px solid currentColor;
+  border-radius: var(--radius-sm);
+  transform: rotate(-2deg);
+}
+
+.badge.ok, .stamp.ok { color: var(--ok-ink); background: var(--ok-bg); }
+.badge.warn, .stamp.warn { color: var(--warn-ink); background: var(--warn-bg); }
+.badge.danger, .stamp.danger { color: var(--danger-ink); background: var(--danger-bg); }
+
+/* ==========================================================================
+   Alerts
+   ========================================================================== */
+
+.alert {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  border-left: 4px solid;
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-4);
+}
+
+.alert.error { background: var(--danger-bg); border-color: var(--danger); color: var(--danger-ink); }
+.alert.warning { background: var(--warn-bg); border-color: var(--warn); color: var(--warn-ink); }
+.alert.success { background: var(--ok-bg); border-color: var(--ok); color: var(--ok-ink); }
+.alert.info { background: var(--paper-sunken); border-color: var(--ink-3); color: var(--ink-2); }
+
+/* ==========================================================================
+   Tables
+   ========================================================================== */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  /* display:block turns the table itself into the scroll container; browsers
+     auto-generate the anonymous table box needed to keep thead/tbody/td
+     column alignment intact. Keeps action buttons reachable on narrow
+     viewports instead of the whole page overflowing horizontally. */
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  /* Pure-CSS edge fade hints that there's more to scroll, without JS. */
+  background:
+    linear-gradient(var(--paper-raised) 30%, transparent), linear-gradient(transparent, var(--paper-raised) 70%) 0 100%,
+    radial-gradient(farthest-side at 0 50%, oklch(20% 0.02 55 / 0.12), transparent),
+    radial-gradient(farthest-side at 100% 50%, oklch(20% 0.02 55 / 0.12), transparent) 100% 0;
+  background-repeat: no-repeat;
+  background-size: 100% 12px, 100% 12px, 12px 100%, 12px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+
+th {
+  text-align: left;
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 2px solid var(--ink);
+}
+
+/* Sortable column headers — a plain button so it inherits th's type
+   treatment while staying keyboard- and screen-reader-accessible. */
+.sort-btn {
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.sort-btn:hover { color: var(--ink); }
+
+td {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  vertical-align: middle;
+}
+
+tbody tr { transition: background var(--duration-fast) var(--ease-out-expo); }
+tbody tr:hover { background: var(--paper-sunken); }
+
+/* Row severity — used instead of ad-hoc inline background colors */
+tr.severity-warn { background: var(--warn-bg); }
+tr.severity-danger { background: var(--danger-bg); }
+tr.severity-warn:hover, tr.severity-danger:hover { filter: brightness(0.97); }
+
+/* ==========================================================================
+   Vehicle cards (Scoreboard)
+   ========================================================================== */
+
+.vehicle-card {
+  border: 1.5px solid var(--line-strong);
+  border-left: 6px solid var(--ink-3);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+  background: var(--paper-raised);
+}
+
+.vehicle-card.status-warn { border-left-color: var(--warn); }
+.vehicle-card.status-danger { border-left-color: var(--danger); }
+
+.vehicle-card h4 {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: var(--text-md);
+  text-transform: none;
+  letter-spacing: normal;
+  margin: 0 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  font-family: var(--font-data);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+.pagination span { white-space: nowrap; }
+
+/* ==========================================================================
+   Collapsible sections — grid-rows trick animates open/closed without
+   ever animating height directly (keeps it to transform-adjacent GPU work).
+   ========================================================================== */
+
+.collapsible {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--duration-base) var(--ease-out-expo);
+}
+.collapsible.collapsed { grid-template-rows: 0fr; }
+.collapsible > div { overflow: hidden; }
+
+/* ==========================================================================
+   Empty / loading states
+   ========================================================================== */
+
+.empty-state {
+  text-align: left;
+  padding: var(--space-6) var(--space-4);
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  color: var(--ink-2);
+}
+
+.empty-state strong { display: block; color: var(--ink); font-size: var(--text-md); margin-bottom: var(--space-1); }
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--paper-sunken);
+  border-radius: var(--radius-sm);
+  height: 1em;
+  display: block;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after { animation: none; }
+}
+
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+/* ==========================================================================
+   Modal (Quick Add) — used sparingly, per guidance
+   ========================================================================== */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: var(--space-4);
+  animation: fade var(--duration-base) var(--ease-out-expo) both;
+}
+
+.modal { max-width: 440px; width: 100%; animation: rise var(--duration-base) var(--ease-out-expo) both; }
+
+/* Field/value list inside confirmation dialogs (e.g. "here's what you're
+   about to delete") — dt/dd pairs wrapped in a div per the HTML5 dl spec,
+   laid out as a two-column grid via display:contents on the wrapper. */
+.detail-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+.detail-row { display: contents; }
+.detail-list dt {
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.detail-list dd { margin: 0; color: var(--ink); }
+
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+@media (max-width: 640px) {
+  .app-container { padding: 0 var(--space-3) var(--space-6); }
+  .card { padding: var(--space-4); }
+  th, td { padding: var(--space-2); }
+
+  /* Nav becomes a single scrollable row instead of wrapping into a ragged
+     multi-line grid — the standard mobile tab-bar pattern. */
+  .nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav a { flex: none; }
+
+  .masthead-meta { flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+
+  .alert { flex-direction: column; align-items: stretch; }
+  .alert .btn, .alert a.btn { align-self: flex-start; margin-top: var(--space-2); }
+}
