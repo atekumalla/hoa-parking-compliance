@@ -80,8 +80,13 @@ export const api = {
   historyOptions: () => request<HistoryOptions>('/api/vehicle-history/options'),
   historySearch: (params: Record<string, string>) =>
     request<{ groups: HistoryGroup[] }>(`/api/vehicle-history/search?${new URLSearchParams(params)}`),
-  exportPhotos: (licensePlate: string, make: string, model: string) => {
+  exportPhotos: (licensePlate: string, make: string, model: string, range: ExportRange) => {
     const params = new URLSearchParams({ license_plate: licensePlate, make, model })
+    if (range.kind === 'days') params.set('days', String(range.days))
+    if (range.kind === 'custom') {
+      params.set('start', range.start)
+      params.set('end', range.end)
+    }
     return request<{ ok: boolean; folder_url: string; message: string }>(
       `/api/vehicle-history/export-photos?${params}`,
       { method: 'POST' },
@@ -106,7 +111,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(fileIds),
     }),
+  storageExports: (refresh = false) =>
+    request<{ exports: ExportFolder[] }>(`/api/storage/exports${refresh ? '?refresh=true' : ''}`),
+  deleteExport: (folderId: string) =>
+    request<{ ok: boolean }>(`/api/storage/delete-export?folder_id=${encodeURIComponent(folderId)}`, {
+      method: 'POST',
+    }),
 }
+
+export type ExportRange = { kind: 'all' } | { kind: 'days'; days: number } | { kind: 'custom'; start: string; end: string }
 
 export interface TodayEntry {
   timestamp: string
@@ -247,4 +260,12 @@ export interface StorageFile {
   size?: string
   createdTime?: string
   folder_name?: string
+}
+
+export interface ExportFolder {
+  id: string
+  name: string
+  created_time: string | null
+  file_count: number
+  folder_url: string
 }

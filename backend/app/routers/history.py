@@ -95,6 +95,7 @@ def search(
 @router.post("/export-photos")
 def export_photos(
     license_plate: str, make: str = "", model: str = "",
+    days: Optional[int] = None, start: Optional[str] = None, end: Optional[str] = None,
     state: AppState = Depends(get_state), oauth_creds=Depends(get_oauth_credentials),
 ):
     if not oauth_creds:
@@ -104,9 +105,30 @@ def export_photos(
     if plate_history.empty:
         raise HTTPException(404, "No history found for this plate.")
 
+    # Narrow to the requested window — defaults to full history when neither
+    # a preset (days) nor a custom start/end range is given.
+    timestamps = pd.to_datetime(plate_history['Timestamp'])
+    if start or end:
+        try:
+            start_dt = datetime.strptime(start, '%Y-%m-%d') if start else timestamps.min()
+            end_dt = datetime.strptime(end, '%Y-%m-%d').replace(hour=23, minute=59, second=59) if end else timestamps.max()
+        except ValueError:
+            raise HTTPException(400, "Invalid 'start'/'end' — expected YYYY-MM-DD")
+        if start_dt > end_dt:
+            raise HTTPException(400, "Start date must be before end date.")
+        plate_history = plate_history[(timestamps >= start_dt) & (timestamps <= end_dt)]
+    elif days:
+        cutoff = datetime.now(PST) - pd.Timedelta(days=days)
+        plate_history = plate_history[timestamps.dt.tz_localize(
+            PST, ambiguous='NaT', nonexistent='shift_forward'
+        ) >= cutoff]
+
+    if plate_history.empty:
+        raise HTTPException(404, "No history found in the selected date range.")
+
     photo_urls = [u for u in plate_history['Photo URL'].dropna().tolist() if str(u).strip().startswith('http')]
     if not photo_urls:
-        raise HTTPException(400, "No photos found to export.")
+        raise HTTPException(400, "No photos found to export in the selected date range.")
 
     first_seen = plate_history['Timestamp'].min().strftime('%Y-%m-%d')
     last_seen = plate_history['Timestamp'].max().strftime('%Y-%m-%d')

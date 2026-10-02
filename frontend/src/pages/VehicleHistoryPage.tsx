@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { api, HistoryEntry, HistoryGroup, HistoryOptions } from '../api'
+import { api, ExportRange, HistoryEntry, HistoryGroup, HistoryOptions } from '../api'
 import EmptyState from '../components/EmptyState'
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal'
+
+type ExportPreset = 'all' | '30' | '60' | '90' | 'custom'
 
 export default function VehicleHistoryPage() {
   const location = useLocation()
@@ -14,7 +16,13 @@ export default function VehicleHistoryPage() {
   const [date, setDate] = useState('')
   const [groups, setGroups] = useState<HistoryGroup[] | null>(null)
   const [searching, setSearching] = useState(false)
-  const [exportMsg, setExportMsg] = useState<string | null>(null)
+  const [exportResult, setExportResult] = useState<{ message: string; folderUrl: string } | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [exportBusy, setExportBusy] = useState(false)
+  const [exportPanelPlate, setExportPanelPlate] = useState<string | null>(null)
+  const [exportPreset, setExportPreset] = useState<ExportPreset>('all')
+  const [exportStart, setExportStart] = useState('')
+  const [exportEnd, setExportEnd] = useState('')
   const [pendingDelete, setPendingDelete] = useState<{ plate: string; entry: HistoryEntry } | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
@@ -75,13 +83,44 @@ export default function VehicleHistoryPage() {
     }
   }
 
-  async function exportPhotos(g: HistoryGroup) {
-    setExportMsg(null)
+  function toggleExportPanel(plate: string) {
+    setExportResult(null)
+    setExportError(null)
+    if (exportPanelPlate === plate) {
+      setExportPanelPlate(null)
+      return
+    }
+    setExportPanelPlate(plate)
+    setExportPreset('all')
+    setExportStart('')
+    setExportEnd('')
+  }
+
+  async function confirmExportPhotos(g: HistoryGroup) {
+    let range: ExportRange
+    if (exportPreset === 'custom') {
+      if (!exportStart || !exportEnd) {
+        setExportError('Please choose both a start and end date.')
+        return
+      }
+      range = { kind: 'custom', start: exportStart, end: exportEnd }
+    } else if (exportPreset === 'all') {
+      range = { kind: 'all' }
+    } else {
+      range = { kind: 'days', days: Number(exportPreset) }
+    }
+
+    setExportError(null)
+    setExportResult(null)
+    setExportBusy(true)
     try {
-      const result = await api.exportPhotos(g.license_plate, g.make, g.model)
-      setExportMsg(`${result.message} — ${result.folder_url}`)
+      const result = await api.exportPhotos(g.license_plate, g.make, g.model, range)
+      setExportResult({ message: result.message, folderUrl: result.folder_url })
+      setExportPanelPlate(null)
     } catch (e) {
-      setExportMsg('Export failed: ' + (e as Error).message)
+      setExportError('Export failed: ' + (e as Error).message)
+    } finally {
+      setExportBusy(false)
     }
   }
 
@@ -129,7 +168,11 @@ export default function VehicleHistoryPage() {
         </div>
       </div>
 
-      {exportMsg && <div className="alert info">{exportMsg}</div>}
+      {exportResult && (
+        <div className="alert info">
+          <span>{exportResult.message} &mdash; <a href={exportResult.folderUrl} target="_blank" rel="noreferrer">Open exported folder in Drive</a></span>
+        </div>
+      )}
 
       {groups && groups.length === 0 && (
         <EmptyState title="No records match your search.">
@@ -170,7 +213,49 @@ export default function VehicleHistoryPage() {
             </tbody>
           </table>
           {g.entries.some((e) => e.photo_url) && (
-            <button className="btn secondary" style={{ marginTop: 'var(--space-3)' }} onClick={() => exportPhotos(g)}>Export photos to Drive</button>
+            <div style={{ marginTop: 'var(--space-3)' }}>
+              <button className="btn secondary" onClick={() => toggleExportPanel(g.license_plate)}>
+                {exportPanelPlate === g.license_plate ? 'Cancel export' : 'Export photos to Drive'}
+              </button>
+
+              {exportPanelPlate === g.license_plate && (
+                <div className="export-panel">
+                  <div className="field">
+                    <label htmlFor={`export-range-${g.license_plate}`}>Photos to include</label>
+                    <select
+                      id={`export-range-${g.license_plate}`}
+                      value={exportPreset}
+                      onChange={(e) => setExportPreset(e.target.value as ExportPreset)}
+                    >
+                      <option value="all">All history</option>
+                      <option value="30">Last 30 days</option>
+                      <option value="60">Last 60 days</option>
+                      <option value="90">Last 90 days</option>
+                      <option value="custom">Custom range&hellip;</option>
+                    </select>
+                  </div>
+
+                  {exportPreset === 'custom' && (
+                    <div className="row">
+                      <div className="field">
+                        <label htmlFor={`export-start-${g.license_plate}`}>Start date</label>
+                        <input id={`export-start-${g.license_plate}`} type="date" value={exportStart} onChange={(e) => setExportStart(e.target.value)} />
+                      </div>
+                      <div className="field">
+                        <label htmlFor={`export-end-${g.license_plate}`}>End date</label>
+                        <input id={`export-end-${g.license_plate}`} type="date" value={exportEnd} onChange={(e) => setExportEnd(e.target.value)} />
+                      </div>
+                    </div>
+                  )}
+
+                  {exportError && <div className="alert warning">{exportError}</div>}
+
+                  <button className="btn" disabled={exportBusy} onClick={() => confirmExportPhotos(g)}>
+                    {exportBusy ? 'Exporting…' : 'Confirm Export'}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       ))}

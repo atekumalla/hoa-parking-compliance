@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { api, FolderInfo, StorageFile, StorageUsage } from '../api'
+import { api, ExportFolder, FolderInfo, StorageFile, StorageUsage } from '../api'
 import EmptyState from '../components/EmptyState'
 import Skeleton from '../components/Skeleton'
 
 export default function StoragePage() {
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [folders, setFolders] = useState<FolderInfo[]>([])
+  const [exports, setExports] = useState<ExportFolder[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedFolder, setSelectedFolder] = useState<FolderInfo | null>(null)
   const [confirmText, setConfirmText] = useState('')
@@ -16,15 +17,17 @@ export default function StoragePage() {
   const [confirmRange, setConfirmRange] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [deletingExportId, setDeletingExportId] = useState<string | null>(null)
 
   useEffect(() => {
     void load()
   }, [])
 
   function load(refresh = false) {
-    return Promise.all([api.storageUsage(refresh), api.storageFolders(refresh)]).then(([u, f]) => {
+    return Promise.all([api.storageUsage(refresh), api.storageFolders(refresh), api.storageExports(refresh)]).then(([u, f, ex]) => {
       setUsage(u)
       setFolders(f.folders)
+      setExports(ex.exports)
       setError(null)
     }).catch((e) => setError((e as Error).message)).finally(() => setLoading(false))
   }
@@ -82,6 +85,19 @@ export default function StoragePage() {
       setError((e as Error).message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function deleteExport(folderId: string) {
+    setDeletingExportId(folderId)
+    setError(null)
+    try {
+      await api.deleteExport(folderId)
+      setExports((prev) => prev.filter((f) => f.id !== folderId))
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setDeletingExportId(null)
     }
   }
 
@@ -169,6 +185,41 @@ export default function StoragePage() {
             </label>
             <button className="btn danger" disabled={!confirmRange || busy} onClick={deleteRange}>Delete Photos in Range</button>
           </div>
+        )}
+      </div>
+
+      <div className="card">
+        <h3>Exported Photo Folders</h3>
+        <p>Folders created from &ldquo;Export photos to Drive&rdquo; on the Vehicle History page. These only contain shortcuts, so deleting one never touches the original photos.</p>
+        {loading ? (
+          <Skeleton rows={2} />
+        ) : exports.length === 0 ? (
+          <EmptyState title="No exports yet.">
+            <p style={{ marginBottom: 0 }}>Export a vehicle's photos from the Vehicle History page to see it here.</p>
+          </EmptyState>
+        ) : (
+          <table>
+            <thead><tr><th>Vehicle / Range</th><th>Requested</th><th>Photos</th><th aria-hidden="true"></th></tr></thead>
+            <tbody>
+              {exports.map((f) => (
+                <tr key={f.id}>
+                  <td><a href={f.folder_url} target="_blank" rel="noreferrer">{f.name}</a></td>
+                  <td>{f.created_time ? new Date(f.created_time).toLocaleString() : 'Unknown'}</td>
+                  <td>{f.file_count}</td>
+                  <td>
+                    <button
+                      className="btn danger"
+                      aria-label={`Delete export folder ${f.name}`}
+                      disabled={deletingExportId === f.id}
+                      onClick={() => deleteExport(f.id)}
+                    >
+                      {deletingExportId === f.id ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </div>

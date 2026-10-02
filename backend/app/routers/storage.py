@@ -11,7 +11,7 @@ from ..services.drive_manager import DriveManager
 router = APIRouter(prefix="/api/storage", tags=["storage"])
 
 _CACHE_TTL_SECONDS = 300
-_cache = {"usage": None, "usage_time": None, "folders": None, "folders_time": None}
+_cache = {"usage": None, "usage_time": None, "folders": None, "folders_time": None, "exports": None, "exports_time": None}
 
 
 def _cache_fresh(time_key: str) -> bool:
@@ -58,6 +58,28 @@ def delete_month(folder_id: str, state: AppState = Depends(get_state)):
     _cache["usage_time"] = None
     _cache["folders_time"] = None
     return {"deleted": success, "failed": failed}
+
+
+@router.get("/exports")
+def get_exports(refresh: bool = False, state: AppState = Depends(get_state)):
+    if refresh or not _cache_fresh("exports_time"):
+        _cache["exports"] = state.drive.list_export_folders()
+        _cache["exports_time"] = datetime.now()
+    return {"exports": _cache["exports"]}
+
+
+@router.post("/delete-export", dependencies=[Depends(admin_auth.require_admin)])
+def delete_export(folder_id: str, state: AppState = Depends(get_state)):
+    # Same injection guard as delete-month — only allow IDs we just listed
+    # as real export subfolders, never an arbitrary client-supplied ID.
+    valid_ids = {f['id'] for f in state.drive.list_export_folders()}
+    if folder_id not in valid_ids:
+        raise HTTPException(404, "Unknown export folder.")
+    success = state.drive.delete_export_folder(folder_id)
+    _cache["exports_time"] = None
+    if not success:
+        raise HTTPException(500, "Failed to delete export folder.")
+    return {"ok": True}
 
 
 @router.get("/range")

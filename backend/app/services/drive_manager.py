@@ -498,6 +498,81 @@ class DriveManager:
         self._monthly_folder_cache['exports'] = folder_id
         return folder_id
 
+    def _find_exports_folder_id(self) -> Optional[str]:
+        """Look up the 'exports' folder without creating it (read-only, service
+        account) — used so viewing the Storage page never requires Google
+        sign-in just because no export has happened yet."""
+        if 'exports' in self._monthly_folder_cache:
+            return self._monthly_folder_cache['exports']
+        try:
+            query = (
+                f"name = 'exports' and "
+                f"mimeType = 'application/vnd.google-apps.folder' and "
+                f"'{self.folder_id}' in parents and "
+                f"trashed = false"
+            )
+            results = self.service.files().list(
+                q=query,
+                spaces='drive',
+                fields='files(id, name)',
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+                pageSize=1
+            ).execute()
+            files = results.get('files', [])
+            if not files:
+                return None
+            folder_id = files[0]['id']
+            self._monthly_folder_cache['exports'] = folder_id
+            return folder_id
+        except Exception:
+            return None
+
+    def list_export_folders(self) -> List[Dict]:
+        """List per-vehicle export folders (each holding shortcuts, not real
+        files) — read-only via the service account, same as monthly folders."""
+        exports_folder_id = self._find_exports_folder_id()
+        if not exports_folder_id:
+            return []
+        try:
+            query = (
+                f"'{exports_folder_id}' in parents and "
+                f"mimeType = 'application/vnd.google-apps.folder' and "
+                f"trashed = false"
+            )
+            results = self.service.files().list(
+                q=query,
+                spaces='drive',
+                fields='files(id, name, createdTime)',
+                orderBy='createdTime desc',
+                pageSize=100,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
+            ).execute()
+            folders = []
+            for f in results.get('files', []):
+                shortcuts = self.list_files_in_folder(f['id'])
+                folders.append({
+                    'id': f['id'],
+                    'name': f['name'],
+                    'created_time': f.get('createdTime'),
+                    'file_count': len(shortcuts),
+                    'folder_url': f"https://drive.google.com/drive/folders/{f['id']}",
+                })
+            return folders
+        except Exception:
+            return []
+
+    def delete_export_folder(self, folder_id: str) -> bool:
+        """Delete an export folder and its shortcuts. The shortcuts only
+        reference the original photos by file ID — removing them never
+        touches (let alone deletes) the source photos they point to."""
+        try:
+            self.service.files().delete(fileId=folder_id, supportsAllDrives=True).execute()
+            return True
+        except Exception:
+            return False
+
     @staticmethod
     def extract_file_id_from_url(url: str) -> Optional[str]:
         """Extract Google Drive file ID from a Drive URL."""

@@ -392,6 +392,21 @@ hr {
   margin: 0;
 }
 
+/* ==========================================================================
+   Photo export panel (Vehicle History) + exported folder list (Storage)
+   ========================================================================== */
+
+.export-panel {
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-top: var(--space-3);
+}
+
+.export-panel .field:last-of-type { margin-bottom: var(--space-3); }
+
+
+
 
 
 
