@@ -250,6 +250,151 @@ hr {
   .masthead-toggle { position: static; margin-bottom: var(--space-4); }
 }
 
+/* -- Status icons: corner badges replacing persistent full-width "success"
+   banners once unlocked / signed in — click to reveal lock/sign-out. -- */
+.status-icons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.status-icon {
+  position: relative;
+}
+
+.status-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--ok);
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+  font-size: var(--text-md);
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-out-expo);
+}
+
+.status-icon-btn:hover { transform: translateY(-1px); }
+.status-icon-btn.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--warn-ink); }
+
+.status-icon-popover {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  min-width: 240px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  box-shadow: 0 6px 20px var(--overlay);
+  z-index: 60;
+  animation: rise var(--duration-fast) var(--ease-out-expo) both;
+}
+
+.status-icon-popover-text {
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  margin: 0 0 var(--space-3);
+}
+
+.google-g-icon {
+  font-family: var(--font-body);
+  font-weight: 700;
+  color: #4285F4;
+  background: var(--paper-raised);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ==========================================================================
+   Camera capture — zoom + quality controls ported from the Streamlit
+   camera component.
+   ========================================================================== */
+
+.camera-shell { scroll-margin: var(--space-5); }
+
+.camera-status {
+  padding: var(--space-5);
+  text-align: center;
+  color: var(--ink-3);
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+}
+
+.camera-controls { margin-top: var(--space-3); }
+
+.camera-zoom-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.camera-zoom-label {
+  font-family: var(--font-data);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.camera-zoom-slider {
+  flex: 1;
+  accent-color: var(--accent-strong);
+  height: 32px;
+  cursor: pointer;
+}
+
+.camera-quality-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.camera-quality-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.camera-quality-btn {
+  padding: 0.4em 0.9em;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.camera-quality-btn.active {
+  background: var(--accent);
+  border-color: var(--ink);
+  color: var(--accent-ink);
+}
+
+.camera-status-note {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  margin: 0;
+}
+
+
+
+
 /* -- Nav: booklet tabs, not pills -- */
 .nav {
   display: flex;

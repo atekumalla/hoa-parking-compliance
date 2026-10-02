@@ -7,16 +7,19 @@ import VehicleHistoryPage from './pages/VehicleHistoryPage'
 import StoragePage from './pages/StoragePage'
 import RulesPage from './pages/RulesPage'
 import ThemeToggle from './components/ThemeToggle'
-import AdminUnlock from './components/AdminUnlock'
+import { AdminUnlockIcon, AdminUnlockPrompt } from './components/AdminUnlock'
+import GoogleAuthIcon from './components/GoogleAuthIcon'
 
 export default function App() {
   const [links, setLinks] = useState<{ sheet_url: string; drive_url: string } | null>(null)
   const [auth, setAuth] = useState<{ configured: boolean; authenticated: boolean } | null>(null)
+  const [adminStatus, setAdminStatus] = useState<{ configured: boolean; authenticated: boolean } | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
 
   useEffect(() => {
     api.links().then(setLinks).catch(() => {})
     refreshAuth()
+    refreshAdminStatus()
 
     const params = new URLSearchParams(window.location.search)
     const error = params.get('auth_error')
@@ -34,10 +37,20 @@ export default function App() {
     api.authStatus().then(setAuth).catch(() => {})
   }
 
+  function refreshAdminStatus() {
+    api.adminStatus().then(setAdminStatus).catch(() => {})
+  }
+
   return (
     <div className="app-container">
       <header className="masthead">
-        <div className="masthead-toggle"><ThemeToggle /></div>
+        <div className="masthead-toggle">
+          <div className="status-icons">
+            <AdminUnlockIcon status={adminStatus} onChange={refreshAdminStatus} />
+            <GoogleAuthIcon status={auth} onChange={refreshAuth} />
+            <ThemeToggle />
+          </div>
+        </div>
         <span className="eyebrow">Station 121 &middot; Guest Parking Enforcement</span>
         <h1>Compliance Tracker</h1>
         {links && (
@@ -48,7 +61,7 @@ export default function App() {
         )}
       </header>
 
-      <AdminUnlock />
+      <AdminUnlockPrompt status={adminStatus} onChange={refreshAdminStatus} />
 
       {authError && (
         <div className="alert error">
@@ -57,21 +70,10 @@ export default function App() {
         </div>
       )}
 
-      {auth?.configured && (
-        <div className={`alert ${auth.authenticated ? 'success' : 'warning'}`}>
-          {auth.authenticated ? (
-            <>
-              <span>Signed in to Google — photo uploads enabled.</span>
-              <button className="btn secondary" onClick={() => api.logout().then(refreshAuth)}>
-                Sign out
-              </button>
-            </>
-          ) : (
-            <>
-              <span>Sign in with Google to enable photo uploads to Drive.</span>
-              <a className="btn" href="/api/auth/login">Sign in with Google</a>
-            </>
-          )}
+      {auth?.configured && !auth.authenticated && (
+        <div className="alert warning">
+          <span>Sign in with Google to enable photo uploads to Drive.</span>
+          <a className="btn" href="/api/auth/login">Sign in with Google</a>
         </div>
       )}
 

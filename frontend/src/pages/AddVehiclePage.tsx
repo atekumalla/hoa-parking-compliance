@@ -157,7 +157,9 @@ export default function AddVehiclePage() {
       form.append('warned', String(warned))
       form.append('towed', String(towed))
       form.append('use_exif_date', String(photoSource === 'upload' && useExifDate))
-      form.append('add_watermark', String(photoSource !== 'none' && addWatermark))
+      // Camera photos are always stamped (matching the old Streamlit app);
+      // uploads only get a timestamp if the user opts in via the checkbox.
+      form.append('add_watermark', String(photoSource === 'camera' || (photoSource === 'upload' && addWatermark)))
       form.append('force', String(force))
       if (photoFile) form.append('photo', photoFile)
 
@@ -373,15 +375,20 @@ export default function AddVehiclePage() {
                 {analyzing ? 'Analyzing…' : 'Analyze with AI'}
               </button>
             </div>
-            <label className="check-row" style={{ marginTop: 'var(--space-3)', textTransform: 'none' }}>
-              <input type="checkbox" checked={addWatermark} onChange={(e) => setAddWatermark(e.target.checked)} />
-              Stamp the photo with the entry date/time
-            </label>
+            {photoSource === 'camera' && (
+              <p className="camera-status-note" style={{ marginTop: 'var(--space-3)' }}>📅 Camera photos are automatically stamped with the date/time.</p>
+            )}
             {photoSource === 'upload' && (
-              <label className="check-row" style={{ textTransform: 'none' }}>
-                <input type="checkbox" checked={useExifDate} onChange={(e) => setUseExifDate(e.target.checked)} />
-                Backdate entry using the photo's metadata date, if available
-              </label>
+              <>
+                <label className="check-row" style={{ marginTop: 'var(--space-3)', textTransform: 'none' }}>
+                  <input type="checkbox" checked={addWatermark} onChange={(e) => setAddWatermark(e.target.checked)} />
+                  Stamp the photo with the entry date/time
+                </label>
+                <label className="check-row" style={{ textTransform: 'none' }}>
+                  <input type="checkbox" checked={useExifDate} onChange={(e) => setUseExifDate(e.target.checked)} />
+                  Backdate entry using the photo's metadata date, if available
+                </label>
+              </>
             )}
           </div>
         )}

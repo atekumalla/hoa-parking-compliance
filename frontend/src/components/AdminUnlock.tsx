@@ -1,21 +1,43 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { api } from '../api'
+import StatusIconButton from './StatusIconButton'
 
-/** Shared-passcode unlock gate for destructive actions (add/delete entries,
- * delete photos, force refresh). Reads never require this. */
-export default function AdminUnlock() {
-  const [status, setStatus] = useState<{ configured: boolean; authenticated: boolean } | null>(null)
+export interface AdminStatus {
+  configured: boolean
+  authenticated: boolean
+}
+
+interface Props {
+  status: AdminStatus | null
+  onChange: () => void
+}
+
+/** Corner icon shown once unlocked — click to lock again. Replaces the
+ * full-width green banner that used to stay on screen permanently. */
+export function AdminUnlockIcon({ status, onChange }: Props) {
+  if (!status?.authenticated) return null
+
+  async function lock() {
+    await api.adminLogout()
+    onChange()
+  }
+
+  return (
+    <StatusIconButton icon="🔓" label="Unlocked — click to lock" tone="ok">
+      <p className="status-icon-popover-text">Unlocked — adding, deleting, and refreshing data is enabled on this device.</p>
+      <button className="btn secondary" onClick={lock}>Lock</button>
+    </StatusIconButton>
+  )
+}
+
+/** Full-width passcode prompt — only shown while locked, since it's the one
+ * state that actually needs the user's attention. */
+export function AdminUnlockPrompt({ status, onChange }: Props) {
   const [passcode, setPasscode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    refresh()
-  }, [])
-
-  function refresh() {
-    api.adminStatus().then(setStatus).catch(() => {})
-  }
+  if (!status?.configured || status.authenticated) return null
 
   async function unlock(e: FormEvent) {
     e.preventDefault()
@@ -24,28 +46,12 @@ export default function AdminUnlock() {
     try {
       await api.adminLogin(passcode)
       setPasscode('')
-      refresh()
+      onChange()
     } catch {
       setError('Incorrect passcode.')
     } finally {
       setBusy(false)
     }
-  }
-
-  async function lock() {
-    await api.adminLogout()
-    refresh()
-  }
-
-  if (!status?.configured) return null
-
-  if (status.authenticated) {
-    return (
-      <div className="alert success">
-        <span>Unlocked — adding, deleting, and refreshing data is enabled on this device.</span>
-        <button className="btn secondary" onClick={lock}>Lock</button>
-      </div>
-    )
   }
 
   return (
