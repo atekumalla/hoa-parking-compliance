@@ -70,8 +70,8 @@ export default function QuickAddModal({ vehicle, onClose, onSuccess }: Props) {
         <p>Tag {vehicle.tag_number} &middot; {vehicle.make} {vehicle.model}</p>
 
         <div className="row" style={{ marginBottom: 'var(--space-4)' }}>
-          <label className="check-row"><input type="checkbox" checked={warned} onChange={(e) => setWarned(e.target.checked)} /> Issue Warning</label>
-          <label className="check-row"><input type="checkbox" checked={towed} onChange={(e) => setTowed(e.target.checked)} /> Mark as Towed</label>
+          <label className="check-row"><input type="checkbox" checked={warned} onChange={(e) => setWarned(e.target.checked)} /> ⚠️ Issue Warning</label>
+          <label className="check-row"><input type="checkbox" checked={towed} onChange={(e) => setTowed(e.target.checked)} /> 🚛 Mark as Towed</label>
         </div>
 
         <div className="field">
@@ -101,7 +101,7 @@ export default function QuickAddModal({ vehicle, onClose, onSuccess }: Props) {
         ) : (
           <div className="row" style={{ marginTop: 'var(--space-4)' }}>
             <button className="btn" disabled={submitting} onClick={() => submit(false)}>{submitting ? 'Saving…' : 'Submit'}</button>
-            <button className="btn secondary" onClick={onClose}>Cancel</button>
+            <button className="btn secondary" onClick={onClose}>❌ Cancel</button>
           </div>
         )}
       </div>

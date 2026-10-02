@@ -246,7 +246,7 @@ export default function CameraCapture({ onCapture }: Props) {
           <div className="row camera-controls">
             <button type="button" className="btn" onClick={snap}>📷 Capture</button>
             <button type="button" className="btn secondary" onClick={flip}>🔄 Flip</button>
-            <button type="button" className="btn secondary" onClick={stop}>Cancel</button>
+            <button type="button" className="btn secondary" onClick={stop}>❌ Cancel</button>
           </div>
 
           <div className="camera-quality-row">

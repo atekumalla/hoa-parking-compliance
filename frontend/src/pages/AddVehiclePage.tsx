@@ -442,8 +442,8 @@ export default function AddVehiclePage() {
               </div>
             </div>
             <div className="row" style={{ marginBottom: 'var(--space-4)' }}>
-              <label className="check-row"><input type="checkbox" checked={warned} onChange={(e) => setWarned(e.target.checked)} /> Issue Warning</label>
-              <label className="check-row"><input type="checkbox" checked={towed} onChange={(e) => setTowed(e.target.checked)} /> Mark as Towed</label>
+              <label className="check-row"><input type="checkbox" checked={warned} onChange={(e) => setWarned(e.target.checked)} /> ⚠️ Issue Warning</label>
+              <label className="check-row"><input type="checkbox" checked={towed} onChange={(e) => setTowed(e.target.checked)} /> 🚛 Mark as Towed</label>
             </div>
             <button className="btn" type="submit" disabled={submitting}>
               {submitting ? 'Saving…' : 'Submit Entry'}
