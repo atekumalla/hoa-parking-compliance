@@ -18,7 +18,10 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature
 from . import config
 
 ADMIN_COOKIE = "admin_sid"
-_SESSION_MAX_AGE = timedelta(hours=12)
+# Slides forward on every authenticated request (see _renew_cookie) — an
+# actively-used device stays unlocked indefinitely, matching how the Google
+# login already behaves, while an idle/stolen one re-locks after a week.
+_SESSION_MAX_AGE = timedelta(days=7)
 _serializer = URLSafeTimedSerializer(config.SESSION_SECRET_KEY, salt="admin-session")
 
 # session_id -> last_used_at
@@ -65,6 +68,13 @@ def start_session(response: Response) -> None:
     _sweep_expired()
     session_id = secrets.token_urlsafe(32)
     _SESSIONS[session_id] = datetime.now()
+    _renew_cookie(response, session_id)
+
+
+def _renew_cookie(response: Response, session_id: str) -> None:
+    # Re-signs with a fresh timestamp so the itsdangerous max_age check (and
+    # the cookie's own max_age) both restart from now, sliding the window
+    # forward instead of expiring 7 days after the original login.
     signed = _serializer.dumps(session_id)
     response.set_cookie(
         ADMIN_COOKIE,
@@ -120,19 +130,21 @@ def _read_session_id(request: Request):
         return None
 
 
-def is_authenticated(request: Request) -> bool:
+def is_authenticated(request: Request, response: Response | None = None) -> bool:
     session_id = _read_session_id(request)
     if not session_id or session_id not in _SESSIONS:
         return False
     _SESSIONS[session_id] = datetime.now()  # touch last-used
+    if response is not None:
+        _renew_cookie(response, session_id)  # slide the 7-day window forward
     return True
 
 
-def require_admin(request: Request) -> None:
+def require_admin(request: Request, response: Response) -> None:
     """FastAPI dependency — raises 401 unless the shared passcode has been entered."""
     if not is_configured():
         raise HTTPException(503, "Destructive actions are disabled: ADMIN_PASSCODE is not configured.")
-    if not is_authenticated(request):
+    if not is_authenticated(request, response):
         raise HTTPException(401, "Admin unlock required — enter the passcode first.")
 
 

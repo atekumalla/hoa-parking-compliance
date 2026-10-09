@@ -575,7 +575,7 @@ label {
   margin-bottom: var(--space-2);
 }
 
-input[type="text"], input[type="date"], input[type="file"], select, textarea {
+input[type="text"], input[type="password"], input[type="date"], input[type="file"], select, textarea {
   background: var(--paper-raised);
   border: 1.5px solid var(--line-strong);
   border-radius: var(--radius-sm);
@@ -588,13 +588,40 @@ input[type="text"], input[type="date"], input[type="file"], select, textarea {
   transition: border-color var(--duration-fast) var(--ease-out-expo);
 }
 
-input[type="text"]:hover, select:hover { border-color: var(--ink-3); }
+input[type="text"]:hover, input[type="password"]:hover, select:hover { border-color: var(--ink-3); }
 
-input[type="text"]:focus-visible, input[type="date"]:focus-visible, select:focus-visible {
+input[type="text"]:focus-visible, input[type="password"]:focus-visible, input[type="date"]:focus-visible, select:focus-visible {
   border-color: var(--accent-strong);
   outline: 2px solid var(--accent-strong);
   outline-offset: 1px;
 }
+
+.passcode-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.passcode-field input[type="password"],
+.passcode-field input[type="text"] {
+  padding-right: 2.4em;
+}
+
+.passcode-toggle {
+  position: absolute;
+  right: 0.4em;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 0.2em;
+  line-height: 1;
+  font-size: 1.1em;
+  cursor: pointer;
+  color: var(--ink-3);
+}
+
+.passcode-toggle:hover { color: var(--ink); }
 
 input::placeholder { color: var(--ink-3); opacity: 1; }
 

@@ -34,6 +34,7 @@ export function AdminUnlockIcon({ status, onChange }: Props) {
  * state that actually needs the user's attention. */
 export function AdminUnlockPrompt({ status, onChange }: Props) {
   const [passcode, setPasscode] = useState('')
+  const [showPasscode, setShowPasscode] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -58,14 +59,25 @@ export function AdminUnlockPrompt({ status, onChange }: Props) {
     <div className="alert warning">
       <form onSubmit={unlock} style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
         <span>Enter the passcode to add, delete, or refresh data.</span>
-        <input
-          type="password"
-          value={passcode}
-          onChange={(e) => setPasscode(e.target.value)}
-          placeholder="Passcode"
-          style={{ width: 160 }}
-          aria-label="Admin passcode"
-        />
+        <span className="passcode-field" style={{ width: 160 }}>
+          <input
+            type={showPasscode ? 'text' : 'password'}
+            value={passcode}
+            onChange={(e) => setPasscode(e.target.value)}
+            placeholder="Passcode"
+            aria-label="Admin passcode"
+          />
+          <button
+            type="button"
+            className="passcode-toggle"
+            onClick={() => setShowPasscode((v) => !v)}
+            aria-label={showPasscode ? 'Hide passcode' : 'Show passcode'}
+            aria-pressed={showPasscode}
+            tabIndex={-1}
+          >
+            {showPasscode ? '🙈' : '👁️'}
+          </button>
+        </span>
         <button className="btn" type="submit" disabled={busy || !passcode}>{busy ? 'Checking…' : 'Unlock'}</button>
       </form>
       {error && <div style={{ marginTop: 'var(--space-2)', color: 'var(--danger-ink)' }}>{error}</div>}

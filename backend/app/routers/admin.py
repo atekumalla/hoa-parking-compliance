@@ -12,10 +12,10 @@ class LoginBody(BaseModel):
 
 
 @router.get("/status")
-def admin_status(request: Request):
+def admin_status(request: Request, response: Response):
     return {
         "configured": admin_auth.is_configured(),
-        "authenticated": admin_auth.is_authenticated(request),
+        "authenticated": admin_auth.is_authenticated(request, response),
         "photo_trusted": admin_auth.has_photo_trust(request),
     }
 
