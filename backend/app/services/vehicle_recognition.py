@@ -1,7 +1,7 @@
 """
 Vehicle Recognition Module
 
-Uses OpenAI GPT-4o vision to extract license plate, make, model,
+Uses OpenAI GPT-6 Luna vision to extract license plate, make, model,
 and color from vehicle photos for the HOA parking compliance tracker.
 """
 
@@ -100,7 +100,7 @@ def analyze_vehicle_photo(image_bytes: bytes) -> VehicleInfo:
             "Add it to your .env file to enable photo analysis."
         )
 
-    model = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
+    model = os.getenv("OPENAI_VISION_MODEL", "gpt-6-luna")
 
     client = openai.OpenAI(api_key=api_key)
 
@@ -140,6 +140,10 @@ def analyze_vehicle_photo(image_bytes: bytes) -> VehicleInfo:
         response_format={"type": "json_object"},
         max_tokens=300,
         temperature=0,
+        # gpt-6-luna is a reasoning model; "none" matches the old gpt-4o-mini
+        # latency/cost profile and keeps temperature=0 valid (reasoning effort
+        # above "none" rejects temperature on Chat Completions).
+        reasoning_effort="none",
     )
 
     data = json.loads(response.choices[0].message.content)

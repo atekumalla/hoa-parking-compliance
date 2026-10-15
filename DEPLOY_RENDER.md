@@ -127,7 +127,7 @@ In the Render dashboard, go to your service → **Environment** tab and add:
 | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` | Optional | Enables per-user Google sign-in for Drive uploads |
 | `GOOGLE_OAUTH_REDIRECT_URI` | Optional | `https://your-app.onrender.com/api/auth/callback` — must also be registered as an authorized redirect URI in Google Cloud Console |
 | `FRONTEND_URL` | Optional | `https://your-app.onrender.com` — where the OAuth callback redirects back to |
-| `OPENAI_API_KEY` / `OPENAI_VISION_MODEL` | Optional | Enables AI photo analysis (model defaults to `gpt-4o-mini`) |
+| `OPENAI_API_KEY` / `OPENAI_VISION_MODEL` | Optional | Enables AI photo analysis (model defaults to `gpt-6-luna`) |
 | `PYTHON_VERSION` | Recommended | `3.11.6` |
 | `NODE_VERSION` | Recommended | `20` (or newer) — needed for the frontend build step |
 

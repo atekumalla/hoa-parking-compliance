@@ -209,7 +209,7 @@ If you're on a free personal Gmail account, Shared Drives are not available. As 
 4. *(Optional)* To enable AI photo analysis:
    ```bash
    OPENAI_API_KEY=your_openai_api_key
-   OPENAI_VISION_MODEL=gpt-4o-mini
+   OPENAI_VISION_MODEL=gpt-6-luna
    ```
 
 ### Step 8: Install Dependencies
@@ -461,7 +461,7 @@ Key differences from local development:
 - **Symptom**: The plate is read incorrectly
   - **Solution**: Set the camera quality toggle to **Mid**, get closer or use the zoom
     control so the plate fills more of the frame, and avoid steep angles. You can also
-    try a stronger model by setting `OPENAI_VISION_MODEL` (e.g. `gpt-4o` or `gpt-4.1`).
+    try a stronger model by setting `OPENAI_VISION_MODEL` (e.g. `gpt-6.1-sol` or `gpt-6-astra`).
     Always verify AI-filled fields before submitting.
 
 ### Camera Not Working
