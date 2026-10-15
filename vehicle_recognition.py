@@ -138,7 +138,8 @@ def analyze_vehicle_photo(image_bytes: bytes) -> VehicleInfo:
             ]
         }],
         response_format={"type": "json_object"},
-        max_tokens=300,
+        # gpt-6-luna rejects the legacy max_tokens param in favor of this one.
+        max_completion_tokens=300,
         temperature=0,
         # gpt-6-luna is a reasoning model; "none" matches the old gpt-4o-mini
         # latency/cost profile and keeps temperature=0 valid (reasoning effort
