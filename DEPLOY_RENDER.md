@@ -37,7 +37,7 @@ services:
   - type: web
     name: hoa-parking-compliance
     runtime: python
-    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
+    buildCommand: pip install --upgrade "pip>=26.2.2" && pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
     startCommand: sh start_backend.sh
     envVars:
       - key: GOOGLE_SHEET_ID
@@ -55,7 +55,7 @@ services:
       - key: PYTHON_VERSION
         value: "3.11.6"
       - key: NODE_VERSION
-        value: "20"
+        value: "22.23.4"
 ```
 
 ---
@@ -101,7 +101,7 @@ git add start_backend.sh
 | **Name** | `hoa-parking-compliance` (or your choice) |
 | **Region** | Pick the closest to you |
 | **Runtime** | `Python` |
-| **Build Command** | `pip install -r backend/requirements.txt && cd frontend && npm install && npm run build` |
+| **Build Command** | `pip install --upgrade "pip>=26.2.2" && pip install -r backend/requirements.txt && cd frontend && npm install && npm run build` |
 | **Start Command** | `sh start_backend.sh` |
 | **Instance Type** | Free (or Starter for better performance) |
 
@@ -129,7 +129,7 @@ In the Render dashboard, go to your service → **Environment** tab and add:
 | `FRONTEND_URL` | Optional | `https://your-app.onrender.com` — where the OAuth callback redirects back to |
 | `OPENAI_API_KEY` / `OPENAI_VISION_MODEL` | Optional | Enables AI photo analysis (model defaults to `gpt-6-luna`) |
 | `PYTHON_VERSION` | Recommended | `3.11.6` |
-| `NODE_VERSION` | Recommended | `20` (or newer) — needed for the frontend build step |
+| `NODE_VERSION` | Recommended | `22.23.4` (or a later 22.x / 24.22.1+ / 26.12.1+) — needed for the frontend build step. Older versions are missing the October 2026 TLS/eMudhra security fixes |
 
 ### How to get the credentials JSON value:
 

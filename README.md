@@ -380,7 +380,7 @@ as static files. See [DEPLOY_RENDER.md](DEPLOY_RENDER.md) for the full step-by-s
 
 **Build Command:**
 ```bash
-pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
+pip install --upgrade "pip>=26.2.2" && pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
 ```
 
 **Start Command:**
@@ -403,6 +403,7 @@ sh start_backend.sh
 | `FRONTEND_URL` | `https://your-app.onrender.com` |
 | `OPENAI_API_KEY` / `OPENAI_VISION_MODEL` | Optional, for AI photo analysis |
 | `PYTHON_VERSION` | `3.11.6` |
+| `NODE_VERSION` | `22.23.4` (or later patched release) |
 
 Key differences from local development:
 

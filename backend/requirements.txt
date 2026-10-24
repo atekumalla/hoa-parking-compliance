@@ -14,3 +14,6 @@ pillow-heif>=0.14.0
 python-dotenv>=1.0.0
 openai>=1.55.0
 requests>=2.31.0
+# requests/httpx/httplib2 verify TLS against certifi's bundle, not the system
+# store — 2026.10.19+ drops the emSign root behind the eMudhra CA compromise.
+certifi>=2026.10.19
