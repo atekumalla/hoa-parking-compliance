@@ -37,7 +37,7 @@ services:
   - type: web
     name: hoa-parking-compliance
     runtime: python
-    buildCommand: pip install --upgrade "pip>=26.2.2" && pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
+    buildCommand: pip install --upgrade "pip>=26.2.2" && pip install -r backend/requirements.txt && npm --prefix frontend ci && npm --prefix frontend run build
     startCommand: sh start_backend.sh
     envVars:
       - key: GOOGLE_SHEET_ID
@@ -101,7 +101,7 @@ git add start_backend.sh
 | **Name** | `hoa-parking-compliance` (or your choice) |
 | **Region** | Pick the closest to you |
 | **Runtime** | `Python` |
-| **Build Command** | `pip install --upgrade "pip>=26.2.2" && pip install -r backend/requirements.txt && cd frontend && npm install && npm run build` |
+| **Build Command** | `pip install --upgrade "pip>=26.2.2" && pip install -r backend/requirements.txt && npm --prefix frontend ci && npm --prefix frontend run build` |
 | **Start Command** | `sh start_backend.sh` |
 | **Instance Type** | Free (or Starter for better performance) |
 

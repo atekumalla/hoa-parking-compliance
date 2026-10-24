@@ -380,7 +380,7 @@ as static files. See [DEPLOY_RENDER.md](DEPLOY_RENDER.md) for the full step-by-s
 
 **Build Command:**
 ```bash
-pip install --upgrade "pip>=26.2.2" && pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
+pip install --upgrade "pip>=26.2.2" && pip install -r backend/requirements.txt && npm --prefix frontend ci && npm --prefix frontend run build
 ```
 
 **Start Command:**
